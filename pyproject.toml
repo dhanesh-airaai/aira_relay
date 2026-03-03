@@ -7,6 +7,12 @@ requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28.1",
     "mcp[cli]>=1.26.0",
+    "motor>=3.6",
+    "pydantic-settings>=2.0",
+    "openai>=1.30",
+    "qdrant-client>=1.9",
+    "pyphonetics>=0.5",
+    "numpy>=1.26",
 ]
 
 [dependency-groups]
