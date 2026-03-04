@@ -22,19 +22,26 @@ async def initialize_databases() -> None:
     await mongo.connect(settings.mongo_uri, settings.mongo_db_name)
     await mongo.ensure_indexes()
 
-    # Qdrant
-    await qdrant.connect(settings.qdrant_url, settings.qdrant_api_key)
-    for collection_name, cfg in COLLECTION_CONFIGS.items():
-        await qdrant.ensure_collection(
-            name=collection_name,
-            size=settings.embedding_dimensions,
-            distance=cfg["distance"],
-        )
-        for idx in cfg.get("payload_indexes", []):
-            await qdrant.ensure_payload_index(
-                collection_name=collection_name,
-                field_name=idx["field"],
-                field_schema=idx["schema"],
+    # Qdrant (optional — only needed for phonetic contact search)
+    try:
+        await qdrant.connect(settings.qdrant_url, settings.qdrant_api_key)
+        for collection_name, cfg in COLLECTION_CONFIGS.items():
+            await qdrant.ensure_collection(
+                name=collection_name,
+                size=settings.embedding_dimensions,
+                distance=cfg["distance"],
             )
+            for idx in cfg.get("payload_indexes", []):
+                await qdrant.ensure_payload_index(
+                    collection_name=collection_name,
+                    field_name=idx["field"],
+                    field_schema=idx["schema"],
+                )
+        logger.info("Qdrant initialized successfully")
+    except Exception:
+        logger.warning(
+            "Qdrant unavailable at %s — phonetic contact search disabled",
+            settings.qdrant_url,
+        )
 
     logger.info("Relay databases initialized successfully")

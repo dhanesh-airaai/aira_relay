@@ -11,7 +11,7 @@ from db.qdrant.manager import qdrant
 from models.waha.args import FindContactByNameArgs
 from adapters.waha import WahaClient
 from agents.tooling.services.phonetic.contacts import WhatsappPhoneticSearch
-from services.waha.service import WahaService
+from agents.tooling.services.waha.service import WahaService
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from services.waha.service import WahaService
+from agents.tooling.services.waha.service import WahaService
 
 from adapters.waha import WahaClient
 from config.settings import settings
 from db.mongodb.manager import mongo
-from mcp.notifications import pop_incoming_event
+from relay.notifications import pop_incoming_event
 from mcp.server.fastmcp import Context
 from models.waha.args import (
     DeleteMessageArgs,

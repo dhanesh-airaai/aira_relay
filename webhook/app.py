@@ -9,7 +9,7 @@ from adapters.waha import WahaClient
 from agents.tooling.services.waha.service import WahaService
 from config.settings import settings
 from db.mongodb.manager import mongo
-from mcp.notifications import push_incoming_event
+from relay.notifications import push_incoming_event
 from webhook.models import (
     IncomingMessagePayload,
     SessionStatusPayload,

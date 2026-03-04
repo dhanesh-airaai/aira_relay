@@ -1,0 +1,65 @@
+services:
+
+  # ── MongoDB ────────────────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7
+    container_name: aira-mongodb
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017/tcp"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── WAHA (WhatsApp HTTP API + GOWS engine) ─────────────────────────────────
+  waha:
+    build:
+      context: ./waha-plus
+      dockerfile: Dockerfile
+      additional_contexts:
+        gows_src: ./gows
+    container_name: waha
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3002:3000/tcp"
+    volumes:
+      - "./waha-plus/media:/app/.media"
+    env_file:
+      - .env                                          # single source of truth
+    environment:
+      # Docker-internal overrides (service name routing instead of localhost)
+      WHATSAPP_HOOK_URL: http://relay:8001/webhook/waha
+      WHATSAPP_SESSIONS_MONGO_URL: mongodb://mongodb:27017
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  # ── aira-relay (Python MCP server) ────────────────────────────────────────
+  relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aira-relay
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000/tcp"   # MCP HTTP  → Claude Desktop connects here
+      - "127.0.0.1:8001:8001/tcp"   # Webhook   ← WAHA posts events here
+    env_file:
+      - .env                                          # single source of truth
+    environment:
+      # Docker-internal overrides
+      MCP_TRANSPORT: http
+      WAHA_BASE_URL: http://waha:3000
+      MONGO_URI: mongodb://mongodb:27017
+    depends_on:
+      - waha
+      - mongodb
+
+volumes:
+  mongodb_data: {}

@@ -29,7 +29,7 @@ async def _main_async() -> None:
 async def _run_http_servers() -> None:
     """Run the MCP HTTP server (uvicorn) and the webhook receiver concurrently."""
     from config.settings import settings
-    from mcp.server import mcp
+    from relay.server import mcp
     from webhook.app import serve_webhook
 
     mcp_app = mcp.streamable_http_app()
@@ -54,7 +54,7 @@ async def _run_http_servers() -> None:
 async def _run_stdio_with_webhook() -> None:
     """Run the MCP stdio server alongside the webhook receiver on a background port."""
     from config.settings import settings
-    from mcp.server import mcp
+    from relay.server import mcp
     from webhook.app import serve_webhook
 
     print(
