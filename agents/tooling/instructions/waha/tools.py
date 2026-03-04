@@ -1,4 +1,4 @@
-"""WAHA MCP tool handlers — registers 12 core messaging/contact/group tools."""
+"""WAHA MCP tool handlers for Relay WhatsApp tools."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from db.mongodb.manager import mongo
 from relay.notifications import pop_incoming_event
 from mcp.server.fastmcp import Context
 from models.waha.args import (
+    ConnectWhatsappArgs,
     DeleteMessageArgs,
     EditMessageArgs,
     GetAllContactsArgs,
@@ -43,7 +44,7 @@ _service = WahaService(
 
 
 def register_waha_tools(mcp: FastMCP) -> None:
-    """Register 12 core WAHA tools with a FastMCP server instance."""
+    """Register WAHA tools with a FastMCP server instance."""
 
     @mcp.tool()
     async def send_text_message(
@@ -449,6 +450,36 @@ def register_waha_tools(mcp: FastMCP) -> None:
             ctx=ctx,
             limit=limit,
         )
+
+    @mcp.tool()
+    async def get_or_create_user(phone_number: str) -> dict[str, Any]:
+        """Get or create a Relay user by phone number.
+
+        USE WHEN: Starting any interaction — call this first to obtain the user_id
+        required by all other tools.
+        - phone_number: Phone number with country code, no + (e.g. '919876543210').
+        OUTPUT: id (use as user_id in all subsequent calls), phone_number, created_at.
+        """
+        user = await _service.get_or_create_user(phone_number)
+        return user.model_dump()
+
+    @mcp.tool()
+    async def connect_whatsapp(phone_number: str) -> dict[str, Any]:
+        """Connect a WhatsApp account via phone number pairing code.
+
+        USE WHEN: User wants to connect or link their WhatsApp account to AiRA.
+        BEHAVIOR: Creates/fetches the user by phone number, deletes any stale session,
+        creates a new WAHA session, waits for SCAN_QR_CODE status, then requests
+        an 8-digit pairing code.
+        - phone_number: Phone number to connect (with country code, no +, e.g. '919876543210').
+        OUTPUT: success, user_id (use for all subsequent calls), code (8-digit pairing
+        code to enter in WhatsApp), message, error.
+        After receiving the code, go to WhatsApp > Settings > Linked Devices >
+        Link with phone number and enter the code.
+        """
+        args = ConnectWhatsappArgs(phone_number=phone_number)
+        result = await _service.connect_whatsapp(args)
+        return result.model_dump()
 
     @mcp.tool()
     async def get_incoming_message(timeout: int = 30) -> dict[str, Any]:

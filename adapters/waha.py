@@ -512,7 +512,7 @@ class WahaClient:
     async def request_auth_code(self, *, session: str, phone_number: str) -> dict[str, Any]:
         encoded = quote(session, safe="")
         return await self._post(
-            f"{self._base}/{encoded}/auth/request-code",
+            f"{self._base}/sessions/{encoded}/auth/request-code",
             {"phoneNumber": phone_number},
         )
 

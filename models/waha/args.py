@@ -157,3 +157,9 @@ class ScanUnrepliedMessagesArgs(BaseModel):
     session: str = Field(..., description="WAHA session name (phone number of the connected WhatsApp account).")
     user_id: str
     phone_number: str = Field(..., description="Phone number of the connected WhatsApp account (with country code, no +).")
+
+
+class ConnectWhatsappArgs(BaseModel):
+    """Arguments for connect_whatsapp tool."""
+
+    phone_number: str = Field(..., description="Phone number to connect (with country code, no +, e.g. '919876543210').")

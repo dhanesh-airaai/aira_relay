@@ -10,8 +10,10 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from db.mongodb.collections import CONTACT_PROFILES, USER_STATE, WHATSAPP_CHATS
+from db.mongodb.collections import CONTACT_PROFILES, USER_STATE, USERS, WHATSAPP_CHATS
+from models.user import User
 from models.waha.args import (
+    ConnectWhatsappArgs,
     DeleteMessageArgs,
     EditMessageArgs,
     FindContactByNameArgs,
@@ -28,6 +30,7 @@ from models.waha.args import (
 )
 from models.waha.entities import WhatsappChatType
 from models.waha.responses import (
+    ConnectWhatsappResponse,
     FindContactByNameResponse,
     MessagesSummaryResponse,
     ScanUnrepliedResponse,
@@ -37,6 +40,7 @@ from models.waha.responses import (
     WahaListResponse,
     WahaMessageResponse,
 )
+from utils.crypto import tokenize
 
 if TYPE_CHECKING:
     from adapters.waha import WahaClient
@@ -171,6 +175,130 @@ class WahaService:
                 prefix = f"[{sender_name or 'Unknown'}]"
             lines.append(f"{prefix}: {text}")
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # User management
+    # ------------------------------------------------------------------
+
+    async def get_or_create_user(self, phone_number: str) -> User:
+        """Return the existing user for this phone number, or create one."""
+        from config.settings import settings
+
+        token = tokenize(phone_number, settings.token_secret)
+
+        doc = await self._mongo.find_one(USERS, {"phone_number_token": token})
+        if doc:
+            return User(
+                id=str(doc["_id"]),
+                phone_number=doc["phone_number"],
+                phone_number_token=doc["phone_number_token"],
+                created_at=doc["created_at"],
+            )
+
+        now = datetime.now(UTC)
+        user_id = await self._mongo.insert_one(
+            USERS,
+            {"phone_number": phone_number, "phone_number_token": token, "created_at": now},
+        )
+        return User(
+            id=user_id,
+            phone_number=phone_number,
+            phone_number_token=token,
+            created_at=now,
+        )
+
+    # ------------------------------------------------------------------
+    # Session / connection
+    # ------------------------------------------------------------------
+
+    async def connect_whatsapp(self, args: ConnectWhatsappArgs) -> ConnectWhatsappResponse:
+        """Connect a WhatsApp account by requesting a phone-number pairing code."""
+        import httpx
+
+        phone_number = args.phone_number
+
+        # Ensure user exists (create if first time)
+        user = await self.get_or_create_user(phone_number)
+
+        try:
+            # Clean up any stale session — ignore errors if none exists
+            with contextlib.suppress(Exception):
+                await self._client.delete_session(phone_number)
+
+            created_session = await self._client.create_session(name=phone_number)
+            session_name: str = created_session["name"]
+
+            start_result = await self._client.start_session(session_name)
+            if not start_result:
+                return ConnectWhatsappResponse(
+                    success=False,
+                    user_id=user.id,
+                    code=None,
+                    message="Failed to start WhatsApp session.",
+                    error="Something went wrong. Please try again after some time.",
+                )
+
+            # Poll until SCAN_QR_CODE status (3 attempts × 2 s)
+            session_details = await self._client.get_session(session_name)
+            for _ in range(3):
+                if session_details.get("status") == "SCAN_QR_CODE":
+                    break
+                await asyncio.sleep(2)
+                session_details = await self._client.get_session(session_name)
+            else:
+                return ConnectWhatsappResponse(
+                    success=False,
+                    user_id=user.id,
+                    code=None,
+                    message="WhatsApp session is not ready for QR code scanning.",
+                    error=(
+                        f"Session status: {session_details.get('status')}."
+                        " Please try again after some time."
+                    ),
+                )
+
+            auth_code_response = await self._client.request_auth_code(
+                session=session_name,
+                phone_number=phone_number,
+            )
+            verification_code: str = auth_code_response["code"]
+
+            return ConnectWhatsappResponse(
+                success=True,
+                user_id=user.id,
+                code=verification_code,
+                message=f"Verification code sent to {phone_number} WhatsApp number.",
+                error=None,
+            )
+
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status == 401:
+                error = (
+                    "WAHA API authentication failed (401). "
+                    "Ensure WAHA_API_KEY in .env matches the key the WAHA container was "
+                    "started with, then rebuild: docker-compose down && docker-compose up --build."
+                )
+            else:
+                error = f"WAHA returned HTTP {status}: {exc.response.text[:200]}"
+            logger.error("connect_whatsapp HTTP error for %s: %s", phone_number, error)
+            return ConnectWhatsappResponse(
+                success=False,
+                user_id=user.id,
+                code=None,
+                message="Unable to connect WhatsApp at this time.",
+                error=error,
+            )
+        except httpx.NetworkError as exc:
+            error = f"Cannot reach WAHA at {self._client._base}: {exc}"
+            logger.error("connect_whatsapp network error for %s: %s", phone_number, error)
+            return ConnectWhatsappResponse(
+                success=False,
+                user_id=user.id,
+                code=None,
+                message="Unable to connect WhatsApp at this time.",
+                error=error,
+            )
 
     # ------------------------------------------------------------------
     # Send operations

@@ -77,3 +77,13 @@ class SyncChatsJobResult(BaseModel):
     success: bool
     message: str
     total_synced: int = 0
+
+
+class ConnectWhatsappResponse(BaseModel):
+    """Response for connect_whatsapp tool."""
+
+    success: bool
+    user_id: str | None = None
+    code: str | None = None
+    message: str
+    error: str | None = None

@@ -1,12 +1,22 @@
 """Relay-native settings module."""
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_ROOT_DIR = Path(__file__).resolve().parents[1]
+_ENV_FILE = _ROOT_DIR / ".env"
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables or .env file."""
+
+    # Security
+    token_secret: str = ""
+    """Base64-encoded secret used for HMAC-SHA256 phone number tokenization.
+    Generate with: python -c "import secrets,base64;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+    """
 
     # WAHA
     waha_base_url: str = "http://localhost:3000"
@@ -44,7 +54,10 @@ class Settings(BaseSettings):
     mcp_port: int = 8000
     webhook_port: int = 8001
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(_ENV_FILE),
+        extra="ignore",
+    )
 
 
 settings = Settings()

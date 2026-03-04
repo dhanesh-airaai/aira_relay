@@ -10,7 +10,7 @@ from agents.tooling.instructions.waha.tools import register_waha_tools
 
 mcp = FastMCP("aira-relay")
 
-# Register WAHA messaging/contact/group tools (12 tools)
+# Register WAHA messaging/contact/group tools
 register_waha_tools(mcp)
 
 # Register phonetic contact search tools (2 tools)
