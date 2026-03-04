@@ -15,6 +15,9 @@ dependencies = [
     "numpy>=1.26",
 ]
 
+[project.scripts]
+aira-relay = "main:main"
+
 [dependency-groups]
 dev = [
     "pyright>=1.1.408",
