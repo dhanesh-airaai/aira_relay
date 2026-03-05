@@ -11,6 +11,13 @@ import uvicorn
 
 logging.basicConfig(level=logging.INFO)
 
+if os.getenv("DEBUGPY_ENABLE") == "true":
+    import debugpy
+    debugpy.listen(("0.0.0.0", 5678))
+    if os.getenv("DEBUGPY_WAIT_FOR_CLIENT") == "true":
+        print("Waiting for debugger to attach on port 5678...", file=sys.stderr, flush=True)
+        debugpy.wait_for_client()
+
 
 async def _main_async() -> None:
     from db.init import initialize_databases
@@ -31,6 +38,7 @@ async def _run_http_servers() -> None:
     from config.settings import settings
     from relay.server import mcp
     from webhook.app import serve_webhook
+    print("Settings:", settings)  # Log settings at startup for debugging
 
     mcp_app = mcp.streamable_http_app()
     mcp_config = uvicorn.Config(
@@ -38,12 +46,6 @@ async def _run_http_servers() -> None:
         host="0.0.0.0",
         port=settings.mcp_port,
         log_level="info",
-    )
-
-    print(
-        f"Starting MCP HTTP server on :{settings.mcp_port} "
-        f"and webhook receiver on :{settings.webhook_port}",
-        file=sys.stderr,
     )
 
     async with anyio.create_task_group() as tg:

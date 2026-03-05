@@ -39,27 +39,27 @@ _service = WahaService(
 def register_contacts_tools(mcp: FastMCP) -> None:
     """Register phonetic contact search tools with a FastMCP server instance."""
 
-    @mcp.tool()
-    async def index_contacts(
-        session: str,
-        user_id: str,
-    ) -> dict[str, Any]:
-        """Index WhatsApp contacts in Qdrant for phonetic name search.
+    # @mcp.tool()
+    # async def index_contacts(
+    #     session: str,
+    #     user_id: str,
+    # ) -> dict[str, Any]:
+    #     """Index WhatsApp contacts in Qdrant for phonetic name search.
 
-        USE WHEN: Initial setup or after adding new contacts — must be called before
-        find_contact_by_name can use phonetic matching.
-        BEHAVIOR: Fetches all contacts from WAHA, encodes names with Metaphone,
-        embeds phonetic keys, and upserts them into Qdrant. Skips already-indexed contacts.
-        - session: WAHA session name.
-        - user_id: Relay user identifier.
-        OUTPUT: status — 'ok' with indexed_points count, or 'skipped' with reason.
-        """
-        return await _service.index_contacts(session=session, user_id=user_id)
+    #     USE WHEN: Initial setup or after adding new contacts — must be called before
+    #     find_contact_by_name can use phonetic matching.
+    #     BEHAVIOR: Fetches all contacts from WAHA, encodes names with Metaphone,
+    #     embeds phonetic keys, and upserts them into Qdrant. Skips already-indexed contacts.
+    #     - session: WAHA session name.
+    #     - user_id: Relay user identifier.
+    #     OUTPUT: status — 'ok' with indexed_points count, or 'skipped' with reason.
+    #     """
+    #     return await _service.index_contacts(session=session, user_id=user_id)
 
     @mcp.tool()
     async def find_contact_by_name(
         query: str,
-        session: str,
+        phone_number: str,
         user_id: str,
     ) -> dict[str, Any]:
         """Find WhatsApp contacts by name using phonetic search (Metaphone + Qdrant).
@@ -73,7 +73,7 @@ def register_contacts_tools(mcp: FastMCP) -> None:
         """
         args = FindContactByNameArgs(
             query=query,
-            session=session,
+            session=phone_number,
             user_id=user_id,
         )
         result = await _service.find_contact_by_name(args)

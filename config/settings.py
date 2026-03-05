@@ -8,7 +8,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _ROOT_DIR = Path(__file__).resolve().parents[1]
 _ENV_FILE = _ROOT_DIR / ".env"
 
-
 class Settings(BaseSettings):
     """Application settings loaded from environment variables or .env file."""
 
@@ -19,7 +18,7 @@ class Settings(BaseSettings):
     """
 
     # WAHA
-    waha_base_url: str = "http://localhost:3000"
+    waha_base_url: str = ""
     waha_api_key: str = ""
     waha_webhook_secret: str | None = None
 
@@ -49,6 +48,13 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     azure_openai_endpoint: str | None = None
     azure_openai_api_key: str | None = None
+
+    # OpenClaw agent webhook (optional)
+    # If set, incoming events are forwarded to OpenClaw instead of MCP sessions.
+    openclaw_url: str | None = None          # e.g. http://127.0.0.1:18789
+    openclaw_token: str | None = None        # Bearer token
+    openclaw_agent_name: str = "MCP"         # name field in the hook payload
+    openclaw_gateway_token:str |None =None
 
     # Server ports
     mcp_port: int = 8000

@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
+
+import mcp.types as mcp_types
 
 from db.mongodb.collections import CONTACT_PROFILES, USER_STATE, USERS, WHATSAPP_CHATS
 from models.user import User
@@ -31,11 +31,12 @@ from models.waha.args import (
 from models.waha.entities import WhatsappChatType
 from models.waha.responses import (
     ConnectWhatsappResponse,
+    ContactSearchResult,
     FindContactByNameResponse,
+    MessagesListResponse,
     MessagesSummaryResponse,
     ScanUnrepliedResponse,
     SyncChatsJobResult,
-    SyncChatsStartResponse,
     WahaDataResponse,
     WahaListResponse,
     WahaMessageResponse,
@@ -43,17 +44,75 @@ from models.waha.responses import (
 from utils.crypto import tokenize
 
 if TYPE_CHECKING:
+    from mcp.server.fastmcp import Context
+
     from adapters.waha import WahaClient
     from agents.tooling.services.phonetic.contacts import WhatsappPhoneticSearch
     from db.mongodb.manager import MongoManager
-    from mcp.server.fastmcp import Context
 
 logger = logging.getLogger(__name__)
 
+
+async def _sample(
+    ctx: Context,
+    prompt: str,
+    *,
+    system_prompt: str | None = None,
+    max_tokens: int = 1024,
+) -> str:
+    """Generate text via OpenClaw (if configured) or MCP sampling."""
+    from config.settings import settings
+
+    if settings.openclaw_url:
+        import json as _json
+        import urllib.request
+
+        url = f"{settings.openclaw_url.rstrip('/')}/v1/chat/completions"
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        payload = _json.dumps({"model": "openclaw", "messages": messages}).encode()
+
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {settings.openclaw_gateway_token or ''}",
+            },
+            method="POST",
+        )
+        try:
+            loop = asyncio.get_event_loop()
+            resp = await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=30))
+            body = resp.read()
+            if body:
+                data = _json.loads(body)
+                content = data.get("choices", [{}])[0].get("message", {}).get("content")
+                if content:
+                    return content
+                logger.debug("OpenClaw returned unexpected response, falling back to MCP: %s", data)
+        except Exception as e:
+            logger.warning(
+                "OpenClaw sampling failed, falling back to MCP sampling: %s", e, exc_info=True
+            )
+
+    result = await ctx.request_context.session.create_message(
+        messages=[
+            mcp_types.SamplingMessage(
+                role="user",
+                content=mcp_types.TextContent(type="text", text=prompt),
+            )
+        ],
+        system_prompt=system_prompt,
+        max_tokens=max_tokens,
+    )
+    return result.content.text
+
+
 _WAHA_CONCURRENCY_LIMIT = 10
-_WHATSAPP_NOT_CONNECTED_MSG = (
-    "Your WhatsApp is not connected. Ensure phone_number is provided."
-)
+_WHATSAPP_NOT_CONNECTED_MSG = "Your WhatsApp is not connected. Ensure phone_number is provided."
 
 # ── LLM prompts ────────────────────────────────────────────────────────────────
 
@@ -93,9 +152,6 @@ class WahaService:
         self._mongo = mongo
         self._phonetic_search = phonetic_search
         self._sem = asyncio.Semaphore(_WAHA_CONCURRENCY_LIMIT)
-        self._sync_job_owners: dict[str, str] = {}
-        self._sync_job_results: dict[str, asyncio.Queue[SyncChatsJobResult]] = {}
-        self._sync_job_tasks: dict[str, asyncio.Task[None]] = {}
 
     # ------------------------------------------------------------------
     # Helpers
@@ -141,7 +197,9 @@ class WahaService:
                     {"w_lid": raw_jid},
                 )
                 if doc:
-                    resolved = doc.get("chat_name") or self._client.normalize_wa_id(doc.get("w_chat_id", ""))
+                    resolved = doc.get("chat_name") or self._client.normalize_wa_id(
+                        doc.get("w_chat_id", "")
+                    )
             if not resolved and session:
                 with contextlib.suppress(Exception):
                     lid_resp = await self._client.get_chat_id_by_lids(
@@ -173,8 +231,20 @@ class WahaService:
                 sender_id = (msg.get("participant") if is_group else msg.get("from")) or ""
                 sender_name = await self._resolve_sender_name(sender_id, session, cache)
                 prefix = f"[{sender_name or 'Unknown'}]"
-            lines.append(f"{prefix}: {text}")
+            msg_id = msg.get("id") or ""
+            lines.append(f"[msg_id:{msg_id}] {prefix}: {text}")
         return "\n".join(lines)
+
+    async def add_chat_to_phonetic_index(
+        self, w_chat_id: str, chat_name: str, user_id: str
+    ) -> None:
+        """Index a single chat in Qdrant phonetic search (idempotent, errors suppressed)."""
+        if self._phonetic_search and chat_name:
+            with contextlib.suppress(Exception):
+                await self._phonetic_search.add_contacts_to_qdrant(
+                    contacts=[{"id": w_chat_id, "name": chat_name}],
+                    user_id=user_id,
+                )
 
     # ------------------------------------------------------------------
     # User management
@@ -392,7 +462,9 @@ class WahaService:
     # Retrieval operations
     # ------------------------------------------------------------------
 
-    async def get_messages(self, args: GetMessagesArgs, ctx: Context) -> MessagesSummaryResponse:
+    async def get_messages_summary(
+        self, args: GetMessagesArgs, ctx: Context
+    ) -> MessagesSummaryResponse:
         """Fetch messages and summarize them via MCP sampling."""
         raw_messages = await self._client.get_messages(
             session=args.session,
@@ -405,7 +477,9 @@ class WahaService:
         )
 
         is_group = args.chat_type.value == "g"
-        conversation_text = await self._build_conversation_text(raw_messages, is_group, args.session)
+        conversation_text = await self._build_conversation_text(
+            raw_messages, is_group, args.session
+        )
 
         if not conversation_text:
             return MessagesSummaryResponse(summary="No messages found in this chat.")
@@ -413,12 +487,61 @@ class WahaService:
         query_context = f"\n\nFocus your summary on: {args.query}" if args.query else ""
         user_prompt = f"Conversation:\n{conversation_text}{query_context}"
 
-        result = await ctx.sample(
-            user_prompt,
-            system_prompt=_MESSAGES_SUMMARY_SYSTEM,
-            max_tokens=1024,
+        summary = await _sample(
+            ctx, user_prompt, system_prompt=_MESSAGES_SUMMARY_SYSTEM, max_tokens=1024
         )
-        return MessagesSummaryResponse(summary=result.text)
+        return MessagesSummaryResponse(summary=summary)
+
+    async def get_messages_with_id(
+        self, args: GetMessagesArgs, ctx: Context
+    ) -> MessagesListResponse:
+        """Fetch raw messages and build a readable conversation text."""
+        raw_messages = await self._client.get_messages(
+            session=args.session,
+            chat_id=args.chat_id,
+            limit=args.limit,
+            offset=args.offset,
+            from_timestamp=args.from_timestamp,
+            to_timestamp=args.to_timestamp,
+            download_media=args.download_media,
+        )
+        is_group = args.chat_type.value == "g"
+        conversation_text = await self._build_conversation_text(
+            raw_messages, is_group, args.session
+        )
+        return MessagesListResponse(
+            raw_messages=raw_messages,
+            conversation_text=conversation_text,
+        )
+
+    async def get_chats(
+        self,
+        user_id: str,
+        limit: int = 5000,
+        offset: int = 0,
+        chat_type: str | None = None,
+        moderated_only: bool = False,
+    ) -> WahaListResponse:
+        """Return WhatsApp chats stored in MongoDB for the given user."""
+        filter_: dict[str, Any] = {"user_id": user_id}
+        if chat_type:
+            filter_["type"] = chat_type
+        if moderated_only:
+            filter_["moderation_status"] = True
+
+        chats = await self._mongo.find_many(
+            WHATSAPP_CHATS,
+            filter_,
+            limit=limit,
+            sort=[("conversation_timestamp", -1)],
+        )
+
+        if offset:
+            chats = chats[offset:]
+
+        # Strip internal MongoDB _id before returning
+        cleaned = [{k: v for k, v in chat.items() if k != "_id"} for chat in chats]
+        return WahaListResponse(success=True, data=cleaned)
 
     async def get_all_contacts(self, args: GetAllContactsArgs) -> WahaListResponse:
         """Get all contacts."""
@@ -457,20 +580,28 @@ class WahaService:
             )
 
         if self._phonetic_search is not None:
-            matches = await self._phonetic_search.search_contact_by_name(
+            raw = await self._phonetic_search.search_contact_by_name(
                 query=args.query,
                 user_id=args.user_id,
             )
+            matches: list[ContactSearchResult] = [
+                ContactSearchResult(
+                    w_chat_id=r.get("w_chat_id", ""),
+                    chat_name=r.get("chat_name", ""),
+                    description=r.get("description", ""),
+                )
+                for r in raw
+            ]
         else:
             # Fallback: simple case-insensitive substring match via WAHA contacts API
             contacts = await self._client.get_all_contacts(session=args.session)
             query_lower = args.query.lower()
             matches = [
-                {
-                    "w_chat_id": c.get("id", ""),
-                    "chat_name": c.get("name") or c.get("pushname") or "",
-                    "description": c.get("status") or "",
-                }
+                ContactSearchResult(
+                    w_chat_id=c.get("id", ""),
+                    chat_name=c.get("name") or c.get("pushname") or "",
+                    description=c.get("status") or "",
+                )
                 for c in contacts
                 if query_lower in (c.get("name") or c.get("pushname") or "").lower()
             ]
@@ -624,144 +755,33 @@ class WahaService:
 
         return len(chats_to_store)
 
-    async def sync_chats_stream(
+    async def sync_chats(
         self,
         *,
         session: str,
         user_id: str,
-    ) -> AsyncGenerator[dict[str, Any]]:
-        """Stream sync progress events (pending -> complete/error)."""
-        yield {
-            "event": "waha_sync_pending",
-            "data": {"message": "Starting chat sync...", "step": "init"},
-        }
-        try:
-            total_synced = await self._sync_chats_once(session=session, user_id=user_id)
-            yield {
-                "event": "complete",
-                "data": {
-                    "success": True,
-                    "message": f"Synced {total_synced} chats.",
-                    "total_synced": total_synced,
-                },
-            }
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("sync_chats_stream error for user %s", user_id)
-            yield {
-                "event": "error",
-                "data": {"message": f"Sync failed due to an error: {exc}"},
-            }
-
-    async def start_sync_chats(
-        self,
-        *,
-        session: str,
-        user_id: str,
-    ) -> SyncChatsStartResponse:
-        """Start WhatsApp chat sync in the background and return a job id."""
+    ) -> SyncChatsJobResult:
+        """Sync WhatsApp chats and return the result."""
         if not session:
-            return SyncChatsStartResponse(
+            return SyncChatsJobResult(
                 success=False,
                 message="No WhatsApp session found.",
-                job_id=None,
+                total_synced=0,
             )
-
-        job_id = uuid4().hex
-        self._sync_job_owners[job_id] = user_id
-        self._sync_job_results[job_id] = asyncio.Queue(maxsize=1)
-
-        task = asyncio.create_task(
-            self._run_sync_chats_pipeline(session=session, user_id=user_id, job_id=job_id)
-        )
-        self._sync_job_tasks[job_id] = task
-        task.add_done_callback(lambda _: self._sync_job_tasks.pop(job_id, None))
-
-        return SyncChatsStartResponse(
-            success=True,
-            message="Sync started. Poll the job_id for completion.",
-            job_id=job_id,
-        )
-
-    async def _run_sync_chats_pipeline(
-        self,
-        *,
-        session: str,
-        user_id: str,
-        job_id: str,
-    ) -> None:
-        """Background task: run sync stream and enqueue final job result."""
-        queue = self._sync_job_results.get(job_id)
-        if queue is None:
-            return
-
         try:
-            total_synced = 0
-            last_event: dict[str, Any] = {}
-
-            async for event in self.sync_chats_stream(session=session, user_id=user_id):
-                last_event = event
-                if event.get("event") == "complete":
-                    data = event.get("data", {})
-                    if isinstance(data, dict):
-                        total_synced = int(data.get("total_synced") or 0)
-
-            is_complete = last_event.get("event") == "complete"
-            event_data = last_event.get("data") or {}
-            if isinstance(event_data, dict):
-                message = str(
-                    event_data.get("message")
-                    or ("Sync completed." if is_complete else "Sync failed due to an error.")
-                )
-            else:
-                message = "Sync completed." if is_complete else "Sync failed due to an error."
-
-            await queue.put(
-                SyncChatsJobResult(
-                    success=is_complete,
-                    message=message,
-                    total_synced=total_synced,
-                )
+            total_synced = await self._sync_chats_once(session=session, user_id=user_id)
+            return SyncChatsJobResult(
+                success=True,
+                message=f"Synced {total_synced} chats.",
+                total_synced=total_synced,
             )
-        except Exception:  # noqa: BLE001
-            logger.exception("Sync pipeline failed for job %s", job_id)
-            await queue.put(
-                SyncChatsJobResult(
-                    success=False,
-                    message="Sync failed due to an error.",
-                    total_synced=0,
-                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("sync_chats error for user %s", user_id)
+            return SyncChatsJobResult(
+                success=False,
+                message=f"Sync failed: {exc}",
+                total_synced=0,
             )
-
-    async def get_sync_chats_job_result(
-        self,
-        *,
-        job_id: str,
-        user_id: str,
-        timeout: float = 30.0,
-    ) -> SyncChatsJobResult | None:
-        """Poll for a sync job result. Returns None on timeout."""
-        job_owner = self._sync_job_owners.get(job_id)
-        if job_owner is None:
-            msg = "Job not found or expired."
-            raise ValueError(msg)
-        if job_owner != user_id:
-            msg = "You do not have permission to access this job."
-            raise PermissionError(msg)
-
-        queue = self._sync_job_results.get(job_id)
-        if queue is None:
-            msg = "Job queue not found."
-            raise ValueError(msg)
-
-        try:
-            result = await asyncio.wait_for(queue.get(), timeout=timeout)
-        except TimeoutError:
-            return None
-
-        self._sync_job_owners.pop(job_id, None)
-        self._sync_job_results.pop(job_id, None)
-        self._sync_job_tasks.pop(job_id, None)
-        return result
 
     # ------------------------------------------------------------------
     # Scan unreplied messages
@@ -783,7 +803,6 @@ class WahaService:
         self,
         jid: str,
         session: str,
-        moderated_chat_map: dict[str, dict[str, Any]],
         cache: dict[str, str],
     ) -> str:
         """Resolve a JID (possibly LID) to @c.us format."""
@@ -794,10 +813,7 @@ class WahaService:
             return jid
 
         resolved: str | None = None
-        # 1. moderated_chat_map (keyed by both w_chat_id and w_lid)
-        if jid in moderated_chat_map and moderated_chat_map[jid].get("w_chat_id"):
-            resolved = moderated_chat_map[jid]["w_chat_id"]
-        # 2. MongoDB lookup by w_lid
+        # 1. MongoDB lookup by w_lid
         if not resolved:
             with contextlib.suppress(Exception):
                 doc = await self._mongo.find_one(WHATSAPP_CHATS, {"w_lid": jid})
@@ -821,18 +837,16 @@ class WahaService:
         session: str,
         dm_chats: list[dict[str, Any]],
         from_ts: int,
-        moderated_chat_map: dict[str, dict[str, Any]],
     ) -> dict[str, str]:
         """Fetch unreplied DM conversations concurrently."""
         results: dict[str, str] = {}
 
         async def _process(chat: dict[str, Any]) -> tuple[str, str] | None:
             async with self._sem:
-                doc = moderated_chat_map[chat["id"]]
-                resolved_id = doc.get("w_chat_id") or chat["id"]
+                chat_id = chat["id"]
                 messages = await self._client.get_chat_messages(
                     session=session,
-                    chat_id=resolved_id,
+                    chat_id=chat_id,
                     limit=1000,
                     from_timestamp=from_ts,
                     download_media=False,
@@ -841,8 +855,10 @@ class WahaService:
                 )
                 if not messages or messages[-1].get("fromMe"):
                     return None
-                text = await self._build_conversation_text(messages, is_group=False, session=session)
-                return (doc.get("w_chat_id", chat["id"]), text) if text else None
+                text = await self._build_conversation_text(
+                    messages, is_group=False, session=session
+                )
+                return (chat_id, text) if text else None
 
         gathered = await asyncio.gather(*[_process(c) for c in dm_chats], return_exceptions=True)
         for item in gathered:
@@ -859,7 +875,6 @@ class WahaService:
         session: str,
         group_chats: list[dict[str, Any]],
         from_ts: int,
-        moderated_chat_map: dict[str, dict[str, Any]],
         user_cid: str,
     ) -> dict[str, str]:
         """Fetch group messages since first mention of the user."""
@@ -867,12 +882,11 @@ class WahaService:
         lid_cache: dict[str, str] = {}
 
         for chat in group_chats:
-            doc = moderated_chat_map[chat["id"]]
-            resolved_id = doc.get("w_chat_id") or chat["id"]
+            chat_id = chat["id"]
             try:
                 messages = await self._client.get_chat_messages(
                     session=session,
-                    chat_id=resolved_id,
+                    chat_id=chat_id,
                     limit=1000,
                     from_timestamp=from_ts,
                     download_media=False,
@@ -885,7 +899,9 @@ class WahaService:
                 for i, msg in enumerate(messages):
                     mentioned_jids = self._get_mentioned_jids(msg)
                     for jid in mentioned_jids:
-                        resolved = await self._resolve_jid_to_cus(jid, session, moderated_chat_map, lid_cache)
+                        resolved = await self._resolve_jid_to_cus(
+                            jid, session, lid_cache
+                        )
                         if resolved == user_cid:
                             first_mention_idx = i
                             break
@@ -896,9 +912,9 @@ class WahaService:
                 relevant = messages[first_mention_idx:]
                 text = await self._build_conversation_text(relevant, is_group=True, session=session)
                 if text:
-                    results[doc.get("w_chat_id", chat["id"])] = text
+                    results[chat_id] = text
             except Exception as e:  # noqa: BLE001
-                logger.warning("Group fetch error for %s: %s", resolved_id, e)
+                logger.warning("Group fetch error for %s: %s", chat_id, e)
 
         return results
 
@@ -906,14 +922,16 @@ class WahaService:
         self, args: ScanUnrepliedMessagesArgs, ctx: Context
     ) -> ScanUnrepliedResponse:
         """Scan moderated chats for unreplied DMs and group mentions."""
-        session = self._validate_phone(args.phone_number)
+        session = self._validate_phone(args.session)
 
         # Get or seed the user state (last_checkin_at, user_w_lid)
         user_state = await self._mongo.find_one(USER_STATE, {"user_id": args.user_id})
         last_checked: datetime
         if user_state and user_state.get("last_checkin_at"):
             raw_ts = user_state["last_checkin_at"]
-            last_checked = raw_ts if isinstance(raw_ts, datetime) else datetime.fromisoformat(str(raw_ts))
+            last_checked = (
+                raw_ts if isinstance(raw_ts, datetime) else datetime.fromisoformat(str(raw_ts))
+            )
         else:
             last_checked = datetime.now(UTC) - timedelta(hours=24)
 
@@ -937,37 +955,22 @@ class WahaService:
             total_limit=100,
         )
 
-        # Load chats with moderation enabled from MongoDB
-        moderated_docs = await self._mongo.find_many(
-            WHATSAPP_CHATS,
-            {"user_id": args.user_id, "moderation_status": True},
-        )
-
-        moderated_chat_map: dict[str, dict[str, Any]] = {}
-        for doc in moderated_docs:
-            if doc.get("w_chat_id"):
-                moderated_chat_map[doc["w_chat_id"]] = doc
-            if doc.get("w_lid"):
-                moderated_chat_map[doc["w_lid"]] = doc
-
-        # Filter to moderated chats only
-        moderated_chats = [c for c in all_chats if c.get("id") in moderated_chat_map]
-
-        dm_chats = [
-            c for c in moderated_chats
-            if (moderated_chat_map.get(c["id"]) or {}).get("type") != WhatsappChatType.GROUP.value
-        ]
-        group_chats = [
-            c for c in moderated_chats
-            if (moderated_chat_map.get(c["id"]) or {}).get("type") == WhatsappChatType.GROUP.value
-        ]
+        dm_chats = [c for c in all_chats if not c.get("id", "").endswith("@g.us")]
+        group_chats = [c for c in all_chats if c.get("id", "").endswith("@g.us")]
 
         from_ts = int(last_checked.timestamp())
         user_cid = f"{session}@c.us"
 
-        dm_conversations = await self._fetch_dm_conversations(session, dm_chats, from_ts, moderated_chat_map)
+        dm_conversations = await self._fetch_dm_conversations(session, dm_chats, from_ts)
         group_conversations = await self._fetch_group_conversations(
-            session, group_chats, from_ts, moderated_chat_map, user_cid
+            session, group_chats, from_ts, user_cid
+        )
+
+        now = datetime.now(UTC)
+        await self._mongo.upsert_one(
+            USER_STATE,
+            {"user_id": args.user_id},
+            {"last_checkin_at": now, "user_id": args.user_id},
         )
 
         if not dm_conversations and not group_conversations:
@@ -985,14 +988,15 @@ class WahaService:
             parts.append(f"[Group {chat_id} — you were mentioned]\n{text}")
 
         combined = "\n\n---\n\n".join(parts)
-        result = await ctx.sample(
+        summary = await _sample(
+            ctx,
             f"Unreplied messages:\n\n{combined}",
             system_prompt=_SCAN_SUMMARY_SYSTEM,
             max_tokens=1024,
         )
 
         return ScanUnrepliedResponse(
-            summary=result.text,
+            summary=summary,
             dm_count=len(dm_conversations),
             group_count=len(group_conversations),
         )
@@ -1055,18 +1059,16 @@ class WahaService:
                         f"Recent messages:\n" + "\n".join(lines)
                     )
 
-                    result = await ctx.sample(
-                        user_prompt,
-                        system_prompt=_DESCRIPTION_SYSTEM,
-                        max_tokens=200,
+                    description = await _sample(
+                        ctx, user_prompt, system_prompt=_DESCRIPTION_SYSTEM, max_tokens=200
                     )
-                    if result.text:
+                    if description:
                         await self._mongo.upsert_one(
                             WHATSAPP_CHATS,
                             {"user_id": user_id, "w_chat_id": chat_id},
-                            {"description": result.text},
+                            {"description": description},
                         )
-                    return bool(result.text)
+                    return bool(description)
                 except Exception:
                     logger.exception("Failed to describe chat %s (%s)", chat_name, chat_id)
                     return False

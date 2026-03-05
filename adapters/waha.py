@@ -441,7 +441,7 @@ class WahaClient:
         self,
         *,
         session: str,
-        page_size: int = 20,
+        page_size: int = 10000,
         sort_by: str | None = None,
         sort_order: str | None = None,
         total_limit: int | None = None,
@@ -501,6 +501,7 @@ class WahaClient:
 
     async def delete_session(self, session: str) -> None:
         encoded = quote(session, safe="")
+        print(self._base)
         await self._delete(f"{self._base}/sessions/{encoded}")
 
     async def list_sessions(self) -> list[dict[str, Any]]:
@@ -512,7 +513,7 @@ class WahaClient:
     async def request_auth_code(self, *, session: str, phone_number: str) -> dict[str, Any]:
         encoded = quote(session, safe="")
         return await self._post(
-            f"{self._base}/sessions/{encoded}/auth/request-code",
+            f"{self._base}/{encoded}/auth/request-code",
             {"phoneNumber": phone_number},
         )
 

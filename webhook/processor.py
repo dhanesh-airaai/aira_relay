@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from db.mongodb.collections import WHATSAPP_CHATS
+from relay.notifications import push_incoming_event
 from webhook.models import IncomingMessagePayload, SessionStatusPayload
 
 if TYPE_CHECKING:
@@ -27,7 +28,7 @@ class WebhookProcessor:
         self,
         client: WahaClient,
         mongo: MongoManager,
-        waha_service: WahaService | None = None,
+        waha_service: WahaService,
     ) -> None:
         self._client = client
         self._mongo = mongo
@@ -75,16 +76,16 @@ class WebhookProcessor:
         sender_phone = sender_jid.split("@")[0]
 
         # Look up the chat document in MongoDB (by w_chat_id or w_lid)
-        chat_doc = await self._mongo.find_one(
-            WHATSAPP_CHATS, {"w_chat_id": chat_id}
-        )
+        chat_doc = await self._mongo.find_one(WHATSAPP_CHATS, {"w_chat_id": chat_id})
         if not chat_doc:
-            chat_doc = await self._mongo.find_one(
-                WHATSAPP_CHATS, {"w_lid": payload.from_}
-            )
+            chat_doc = await self._mongo.find_one(WHATSAPP_CHATS, {"w_lid": payload.from_})
 
-        if not chat_doc or not chat_doc.get("moderation_status"):
-            return None
+        if not chat_doc:
+            chat_doc = await self._create_chat_on_demand(
+                session=session, payload=payload, chat_id=chat_id
+            )
+            if not chat_doc:
+                return None
 
         user_id = str(chat_doc.get("user_id", ""))
         chat_name = chat_doc.get("chat_name", "")
@@ -109,6 +110,58 @@ class WebhookProcessor:
             "media_url": media_url,
             "media_mimetype": media_mimetype,
         }
+
+    async def _create_chat_on_demand(
+        self,
+        session: str,
+        payload: IncomingMessagePayload,
+        chat_id: str,
+    ) -> dict[str, Any] | None:
+        """Fetch chat metadata from WAHA and persist in MongoDB when a first message arrives."""
+        try:
+            user = await self._waha_service.get_or_create_user(session)
+            user_id = user.id
+
+            if chat_id.endswith("@g.us"):
+                try:
+                    group_data = await self._client.get_group(session=session, group_id=chat_id)
+                    chat_name = group_data.get("name") or chat_id.split("@")[0]
+                except Exception:
+                    chat_name = chat_id.split("@")[0]
+                chat_type = "group"
+                w_lid = chat_id
+            elif chat_id.endswith("@c.us"):
+                try:
+                    contact = await self._client.get_contact_details(
+                        contact_id=chat_id, session=session
+                    )
+                    chat_name = contact.name or contact.pushname or chat_id.split("@")[0]
+                except Exception:
+                    chat_name = chat_id.split("@")[0]
+                chat_type = "chat"
+                w_lid = payload.from_
+            else:
+                return None
+
+            doc: dict[str, Any] = {
+                "user_id": user_id,
+                "w_chat_id": chat_id,
+                "w_lid": w_lid,
+                "chat_name": chat_name,
+                "type": chat_type,
+                "conversation_timestamp": payload.timestamp or 0,
+            }
+            await self._mongo.upsert_one(
+                WHATSAPP_CHATS,
+                {"user_id": user_id, "w_chat_id": chat_id},
+                doc,
+            )
+            await self._waha_service.add_chat_to_phonetic_index(chat_id, chat_name, user_id)
+            logger.info("Created chat on demand: %s (%s) for user %s", chat_name, chat_id, user_id)
+            return doc
+        except Exception:
+            logger.exception("Failed to create chat on demand for %s", chat_id)
+            return None
 
     async def handle_session_status(
         self,
@@ -148,12 +201,18 @@ class WebhookProcessor:
     # ------------------------------------------------------------------
 
     async def _run_session_working_pipeline(self, session: str) -> None:
-        """Background task: sync all chats into MongoDB."""
+        """Background task: sync all chats into MongoDB and push notification."""
         logger.info("Session WORKING: starting chat sync for %s", session)
         try:
-            total = await self._waha_service._sync_chats_once(  # type: ignore[union-attr]
-                session=session, user_id=session
+            user = await self._waha_service.get_or_create_user(session)
+            result = await self._waha_service.sync_chats(session=session, user_id=user.id)
+            await push_incoming_event(
+                {
+                    "event": "sync_chats",
+                    **result.model_dump(),
+                },
+                hook_type="agent",
             )
-            logger.info("Synced %d chats for session %s", total, session)
+            logger.info("Chat sync complete for session %s", session)
         except Exception:
             logger.exception("Chat sync failed for session %s", session)

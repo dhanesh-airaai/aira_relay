@@ -41,6 +41,7 @@ async def _handle_waha_webhook(raw_body: bytes, headers: dict[str, str]) -> None
         if algorithm != "sha512" or not _waha_client.verify_signature(raw_body, hmac_header):
             logger.warning("Invalid WAHA webhook signature — request rejected")
             return
+    logger.info("Received WAHA webhook event")
 
     try:
         event = WahaWebhookEvent.model_validate_json(raw_body)
@@ -58,6 +59,8 @@ async def _handle_waha_webhook(raw_body: bytes, headers: dict[str, str]) -> None
                 payload=event.payload,
                 event_timestamp=event.timestamp,
             )
+            if processed:
+                await push_incoming_event(processed)
         except Exception:
             logger.exception("Error processing webhook session.status event")
         return
@@ -105,7 +108,6 @@ async def _handle_connection(
 
         content_length = int(headers.get("content-length", 0))
         raw_body = await reader.readexactly(content_length) if content_length else b""
-
         # Route
         if method == "POST" and path == "/webhook/waha":
             await _handle_waha_webhook(raw_body, headers)

@@ -7,6 +7,7 @@ from typing import Any
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
+    Condition,
     Distance,
     FieldCondition,
     Filter,
@@ -96,7 +97,7 @@ class QdrantManager:
             {"key": "user_id", "value": "abc"}   → MatchValue
             {"key": "source", "any": ["a", "b"]} → MatchAny
         """
-        conditions: list[FieldCondition] = []
+        conditions: list[Condition] = []
         for f in filters:
             key = f["key"]
             if "any" in f:
@@ -117,14 +118,15 @@ class QdrantManager:
         """Semantic similarity search with optional payload filtering."""
         client = self._get_client()
         qdrant_filter: Filter | None = self._build_filter(filters) if filters else None
-        return await client.search(
+        result = await client.query_points(
             collection_name=collection_name,
-            query_vector=query_vector,
+            query=query_vector,
             limit=limit,
             with_payload=with_payload,
             score_threshold=score_threshold,
             query_filter=qdrant_filter,
         )
+        return result.points
 
     async def scroll(
         self,

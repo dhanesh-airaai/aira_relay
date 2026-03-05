@@ -45,7 +45,7 @@ class FindContactByNameResponse(BaseModel):
     """Response for find_contact_by_name tool."""
 
     success: bool
-    contacts: list[ContactSearchResult | dict[str, Any]] = []
+    contacts: list[ContactSearchResult] = []
     message: str = ""
 
 
@@ -55,20 +55,19 @@ class MessagesSummaryResponse(BaseModel):
     summary: str
 
 
+class MessagesListResponse(BaseModel):
+    """Response for get_messages_with_id tool."""
+
+    raw_messages: list[dict[str, Any]]
+    conversation_text: str
+
+
 class ScanUnrepliedResponse(BaseModel):
     """Response for scan_unreplied_messages tool — LLM summary of pending messages."""
 
     summary: str
     dm_count: int = 0
     group_count: int = 0
-
-
-class SyncChatsStartResponse(BaseModel):
-    """Response for starting an async chat sync job."""
-
-    success: bool
-    message: str
-    job_id: str | None = None
 
 
 class SyncChatsJobResult(BaseModel):
