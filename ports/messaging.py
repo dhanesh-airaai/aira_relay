@@ -197,6 +197,12 @@ class IMessagingPort(Protocol):
     async def request_auth_code(self, *, session: str, phone_number: str) -> dict[str, Any]: ...
 
     # ------------------------------------------------------------------
+    # Media
+    # ------------------------------------------------------------------
+
+    async def download_media(self, url: str) -> tuple[str, bytes]: ...
+
+    # ------------------------------------------------------------------
     # Webhook
     # ------------------------------------------------------------------
 

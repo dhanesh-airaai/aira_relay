@@ -25,6 +25,7 @@ class IncomingMessageEvent(BaseModel):
     has_media: bool = False
     media_url: str = ""
     media_mimetype: str = ""
+    media_base64: str = ""
     content: list[ContentBlock] = []
 
 

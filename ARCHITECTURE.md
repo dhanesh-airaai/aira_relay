@@ -86,7 +86,7 @@ aira_Relay/
 │   ├── mongodb/             # MongoUserRepo, MongoChatRepo, MongoStateRepo
 │   ├── qdrant/manager.py    # QdrantManager — implements IVectorStore
 │   ├── openclaw.py          # OpenClawAdapter — implements ILLMAdapter
-│   └── embedding.py         # EmbeddingAdapter
+│   └── fastembed_adapter.py # FastEmbedAdapter — implements IEmbeddingAdapter (local, no API key)
 │
 ├── events/                  # Async event pub/sub
 │   ├── bus.py               # EventBus — implements IEventBus
@@ -181,10 +181,21 @@ class WahaClient:
     async def send_text(self, *, session, chat_id, text, ...) -> dict:
         return await self._post(f"{self._base}/sendText", payload)
 
+    async def download_media(self, url: str) -> tuple[str, bytes]:
+        # GET with X-Api-Key header; returns (content_type, raw_bytes)
+
 # infra/openclaw.py — satisfies ILLMAdapter
 class OpenClawAdapter:
     async def complete(self, prompt, *, system_prompt=None, max_tokens=1024) -> str:
         # POST to OpenClaw /v1/chat/completions
+
+# infra/fastembed_adapter.py — satisfies IEmbeddingAdapter
+class FastEmbedAdapter:
+    # Local ONNX model — no API key required
+    # Model: BAAI/bge-small-en-v1.5 (384 dimensions)
+    # Pre-downloaded into Docker image at /app/.fastembed_cache (FASTEMBED_CACHE_PATH)
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        # Runs sync ONNX inference in thread pool via run_in_executor (thread-safe)
 ```
 
 `infra/` imports from `ports/` and `models/` but is **never imported by `core/`**.
@@ -325,11 +336,15 @@ WAHA  →  POST /webhook/waha
          webhook/app.py (verifies HMAC)
          WebhookProcessor.process_message()
            resolves LID, looks up user + chat
+           if has_media:
+             WahaClient.download_media(url)  ← GET with X-Api-Key, returns (content_type, bytes)
+             base64-encode (image/audio/file only; video skipped — LLM unsupported)
            publishes IncomingMessageEvent via EventBus
+             fields: body, media_url, media_mimetype, media_base64, content[]
                     │
            ┌────────┴────────┐
     McpEventHandler    OpenClawHandler
-    queues event        POSTs to OpenClaw
+    queues event        POSTs to /hooks/agent with message + context (includes media_base64)
     pushes to sessions
            │
     get_incoming_message tool
@@ -345,4 +360,56 @@ AI agent  →  send_text_message MCP tool
              WahaClient.send_text()
                mark seen → start typing → delay → POST /sendText
              ← {"success": true, "message_id": "..."}
+```
+
+---
+
+## Embedding & Phonetic Contact Search
+
+### Model
+
+| Property | Value |
+|---|---|
+| Adapter | `FastEmbedAdapter` (`infra/fastembed_adapter.py`) |
+| Model | `BAAI/bge-small-en-v1.5` |
+| Dimensions | **384** |
+| Runtime | ONNX (via `fastembed` package) |
+| API key required | No — runs fully locally |
+| Docker cache | Pre-downloaded at build time into `/app/.fastembed_cache` |
+
+The model is baked into the Docker image during the builder stage:
+
+```dockerfile
+ENV FASTEMBED_CACHE_PATH=/app/.fastembed_cache
+RUN /app/.venv/bin/python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
+```
+
+Both builder and runtime stages set `FASTEMBED_CACHE_PATH=/app/.fastembed_cache` so the pre-downloaded model is found at startup — no internet download at runtime.
+
+> **Important:** The Qdrant `raw_info` collection must be created at **384 dimensions**. If the collection was previously created at 1536 dims (OpenAI), delete it once:
+> ```bash
+> docker exec qdrant curl -X DELETE http://localhost:6333/collections/raw_info
+> ```
+> It will be recreated automatically at 384 dims on next use.
+
+### Thread Safety
+
+FastEmbed's ONNX runtime is not safe for concurrent calls. `FastEmbedAdapter` always runs inference as a single `embed_batch` call inside `loop.run_in_executor(None, ...)` — never concurrent `embed_text` calls via `asyncio.gather`.
+
+### Phonetic Index Pipeline
+
+```
+ContactService.index_all_contacts()
+  → get_all_contacts() from WAHA
+  → extract_phonetic_entries()   # metaphone tags per contact name word
+  → embed_batch(tags)            # FastEmbedAdapter — single thread-pool call
+  → upsert() into Qdrant raw_info collection
+    payload: {user_id, key (metaphone word), mongo_id (list of w_chat_ids), source: "whatsapp"}
+
+ContactService.find_contact_by_name(query)
+  → get_phonetic_tags(query)
+  → embed_batch(tags)
+  → vector search in Qdrant (score_threshold=0.75)
+  → intersect matched w_chat_ids across all query words
+  → fallback: substring match via WAHA contacts API (if Qdrant not available)
 ```

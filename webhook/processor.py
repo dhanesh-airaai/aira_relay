@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 from typing import TYPE_CHECKING
 
@@ -96,6 +97,20 @@ class WebhookProcessor:
         media_mimetype = (
             payload.media.mimetype if payload.has_media and payload.media else ""
         )
+
+        media_base64 = ""
+        if media_url:
+            try:
+                mime_type, media_bytes = await self._messaging.download_media(media_url)
+                # Use actual content-type from response (more reliable than payload field)
+                media_mimetype = mime_type
+                if mime_type.startswith("video/"):
+                    pass  # skip — LLM doesn't support video
+                else:
+                    media_base64 = base64.b64encode(media_bytes).decode()
+            except Exception:
+                logger.warning("Failed to download media from %s", media_url)
+
         content = build_content_blocks(
             body=payload.body or "",
             has_media=payload.has_media,
@@ -116,6 +131,7 @@ class WebhookProcessor:
             has_media=payload.has_media,
             media_url=media_url,
             media_mimetype=media_mimetype,
+            media_base64=media_base64,
             content=content,
         )
         await self._event_bus.publish(event)

@@ -513,6 +513,25 @@ class WahaClient:
         )
 
     # ------------------------------------------------------------------
+    # Media download
+    # ------------------------------------------------------------------
+
+    async def download_media(self, url: str) -> tuple[str, bytes]:
+        """Download media from a WAHA URL. Returns (content_type, bytes)."""
+        try:
+            resp = await self._http.get(
+                url,
+                headers={"Content-Type": "application/json", "X-Api-Key": self._api_key},
+            )
+            resp.raise_for_status()
+            content_type = resp.headers.get("Content-Type", "application/octet-stream")
+            return content_type, resp.content
+        except httpx.HTTPStatusError as exc:
+            raise self._translate_error(exc) from exc
+        except httpx.NetworkError as exc:
+            raise WhatsAppNetworkError(f"Cannot reach WAHA media: {exc}") from exc
+
+    # ------------------------------------------------------------------
     # Webhook signature verification
     # ------------------------------------------------------------------
 
