@@ -46,7 +46,7 @@ services:
     ports:
       - "127.0.0.1:${MCP_PORT:-8000}:${MCP_PORT:-8000}/tcp"   # MCP HTTP  → Claude Desktop connects here
       - "127.0.0.1:${WEBHOOK_PORT:-8001}:${WEBHOOK_PORT:-8001}/tcp"   # Webhook   ← WAHA posts events here
-      - "127.0.0.1:5678:5678/tcp"                              # debugpy   ← VSCode attaches here
+      - "127.0.0.1:${DEBUGPY_PORT:-5678}:${DEBUGPY_PORT:-5678}/tcp"   # debugpy   ← VSCode attaches here
     env_file:
       - .env                                          # single source of truth
     environment:

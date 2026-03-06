@@ -54,11 +54,12 @@ class Settings(BaseSettings):
     openclaw_url: str | None = None          # e.g. http://127.0.0.1:18789
     openclaw_token: str | None = None        # Bearer token
     openclaw_agent_name: str = "MCP"         # name field in the hook payload
-    openclaw_gateway_token:str |None =None
+    openclaw_gateway_token: str | None = None
 
     # Server ports
     mcp_port: int = 8000
     webhook_port: int = 8001
+    debugpy_port: int = 5678
 
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),

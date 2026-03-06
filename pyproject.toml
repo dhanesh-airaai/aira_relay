@@ -28,7 +28,7 @@ dev = [
 [tool.ruff]
 target-version = "py313"
 line-length = 100
-src = ["core", "mcp", "."]
+src = ["core", "relay_mcp", "."]
 exclude = [".venv"]
 
 [tool.ruff.lint]
