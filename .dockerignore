@@ -8,3 +8,8 @@ __pycache__/
 waha-plus/
 gows/
 .env
+.env.example
+README.md
+docker-compose.yml
+Dockerfile
+pyrightconfig.json

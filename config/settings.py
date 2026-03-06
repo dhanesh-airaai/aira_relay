@@ -30,10 +30,10 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str | None = None
 
-    # Embeddings (shared for phonetic search)
+    # Embeddings (shared for phonetic search) — uses local FastEmbed by default
     embedding_provider: Literal["openai", "azure"] = "openai"
     embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 1536
+    embedding_dimensions: int = 384  # BAAI/bge-small-en-v1.5 (fastembed default)
     # Azure-specific embedding settings (if different from LLM)
     azure_embedding_endpoint: str | None = None
     azure_embedding_api_key: str | None = None
@@ -46,8 +46,6 @@ class Settings(BaseSettings):
 
     # OpenAI credentials (used by embeddings; azure_openai_* are fallbacks for azure embedding provider)
     openai_api_key: str | None = None
-    azure_openai_endpoint: str | None = None
-    azure_openai_api_key: str | None = None
 
     # OpenClaw agent webhook (optional)
     # If set, incoming events are forwarded to OpenClaw instead of MCP sessions.

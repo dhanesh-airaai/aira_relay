@@ -33,7 +33,7 @@ async def lifespan() -> AsyncIterator[AppComponents]:
     # ------------------------------------------------------------------
     # Layer 4 — infra
     # ------------------------------------------------------------------
-    from infra.embedding import EmbeddingAdapter
+    from infra.fastembed_adapter import FastEmbedAdapter
     from infra.mongodb.manager import MongoManager
     from infra.openclaw import OpenClawAdapter
     from infra.qdrant.manager import QdrantManager
@@ -71,9 +71,7 @@ async def lifespan() -> AsyncIterator[AppComponents]:
         webhook_secret=settings.waha_webhook_secret,
     )
 
-    embedding: EmbeddingAdapter | None = None
-    if settings.openai_api_key or settings.azure_openai_api_key:
-        embedding = EmbeddingAdapter(settings)
+    embedding = FastEmbedAdapter()
 
     openclaw = OpenClawAdapter(settings)
 
@@ -125,7 +123,7 @@ async def lifespan() -> AsyncIterator[AppComponents]:
     contact_service = ContactService(
         messaging=waha_client,
         chat_repo=chat_repo,
-        vector_store=qdrant if embedding else None,
+        vector_store=qdrant,
         embedding=embedding,
     )
 

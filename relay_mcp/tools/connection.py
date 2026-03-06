@@ -30,9 +30,9 @@ def register_connection_tools(mcp: FastMCP, c: McpContainer) -> None:
         5. Returns the code immediately — the user must enter it in WhatsApp within ~60s.
 
         PARAMETERS:
-        - phone_number: The WhatsApp phone number to connect, with country code, no +
-          (e.g. '919876543210'). Must be the number of the physical device the user
-          will approve the pairing on.
+        - phone_number: The WhatsApp phone number to connect — country code followed by
+          number, no spaces or symbols (e.g. 917995154159). Must be the number of the
+          physical device the user will approve the pairing on.
 
         OUTPUT:
         - success: bool — True if pairing code was obtained successfully.

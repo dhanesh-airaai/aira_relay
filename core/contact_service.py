@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 _PHONETIC_COLLECTION = "raw_info"
 
 _SCORE_THRESHOLD = 0.75
-_EMBED_CONCURRENCY = 5
 _SEARCH_CONCURRENCY = 5
 
 
@@ -88,14 +87,7 @@ class ContactService:
     async def _bounded_embed(self, tags: list[str]) -> list[list[float]]:
         if not tags or self._embedding is None:
             return []
-        vectors: list[list[float]] = []
-        for start in range(0, len(tags), _EMBED_CONCURRENCY):
-            chunk = tags[start : start + _EMBED_CONCURRENCY]
-            chunk_vectors = await asyncio.gather(
-                *(self._embedding.embed_text(t) for t in chunk)
-            )
-            vectors.extend(chunk_vectors)
-        return vectors
+        return await self._embedding.embed_batch(tags)
 
     async def _bounded_search(
         self, vectors: list[list[float]], user_id: str
@@ -209,6 +201,7 @@ class ContactService:
                     },
                 )
             )
+            logger.debug("Prepared vector point for word '%s' (chat IDs: %s)", word, merged_ids)
 
         if points:
             await self._vector_store.upsert(_PHONETIC_COLLECTION, points)

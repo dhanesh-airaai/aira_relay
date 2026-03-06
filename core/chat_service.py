@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -75,6 +74,7 @@ class ChatService:
 
         groups = [c for c in all_chats if is_group_jid(str(c.get("id", "")))]
         dms = [c for c in all_chats if not is_group_jid(str(c.get("id", "")))]
+        logger.info("Fetched %d total chats for user %s (%d groups, %d DMs)", all_chats, user_id, len(groups), len(dms))
 
         chats_to_store: list[dict[str, Any]] = []
 
@@ -156,6 +156,7 @@ class ChatService:
                     for c in chats_to_store
                 ]
             )
+            logger.info("Synced %d chats for user %s", chats_to_store, user_id)
             # Index all synced chats in the phonetic search
             contacts_for_index = [
                 {"id": c["w_chat_id"], "name": c["chat_name"]}
@@ -163,10 +164,13 @@ class ChatService:
                 if c.get("chat_name")
             ]
             if contacts_for_index:
-                with contextlib.suppress(Exception):
+                logger.info("Indexing %d chats in Qdrant for user %s", len(contacts_for_index), user_id)
+                try:
                     await self._contact_svc.add_to_phonetic_index(
                         contacts_for_index, user_id=user_id
                     )
+                except Exception:
+                    logger.exception("Failed to index chats in Qdrant for user %s", user_id)
 
         return len(chats_to_store)
 
@@ -237,10 +241,12 @@ class ChatService:
                 "conversation_timestamp": from_timestamp,
             }
             await self._chat_repo.upsert({"user_id": user_id, "w_chat_id": chat_id}, doc)
-            with contextlib.suppress(Exception):
+            try:
                 await self._contact_svc.add_to_phonetic_index(
                     [{"id": chat_id, "name": chat_name}], user_id=user_id
                 )
+            except Exception:
+                logger.exception("Failed to index chat %s in Qdrant for user %s", chat_id, user_id)
             logger.info("Created chat on demand: %s (%s) for user %s", chat_name, chat_id, user_id)
             return doc
         except Exception:

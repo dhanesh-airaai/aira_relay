@@ -28,11 +28,13 @@ def register_messaging_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C9
         with a contact or group via WhatsApp.
 
         PARAMETERS:
-        - chat_id: WhatsApp chat identifier. For DMs: '919876543210@c.us'. For groups:
-          '1234567890-1234567890@g.us'.
+        - chat_id: WhatsApp chat ID (w_chat_id). For DMs: '919876543210@c.us' (country code
+          + number + '@c.us'). For groups: '1234567890-1234567890@g.us'. Use the exact
+          w_chat_id value returned by get_chats or find_contact_by_name.
         - text: The message body. Supports WhatsApp markdown: *bold*, _italic_,
           ~strikethrough~, ```monospace```.
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
         - reply_to: Optional message ID to quote-reply to.
         - mentions: Optional list of WhatsApp JIDs to @mention.
         - link_preview: Generate URL preview card (default True).
@@ -65,8 +67,11 @@ def register_messaging_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C9
         """Send an image or photo to a WhatsApp contact or group.
 
         PARAMETERS:
-        - chat_id: WhatsApp chat ID.
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - chat_id: WhatsApp chat ID (w_chat_id). For DMs: '919876543210@c.us'.
+          For groups: '1234567890-1234567890@g.us'. Use the exact w_chat_id
+          returned by get_chats or find_contact_by_name.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
         - image_mimetype: MIME type (default 'image/jpeg').
         - image_filename: Filename shown to recipient.
         - caption: Optional text caption.
@@ -102,8 +107,11 @@ def register_messaging_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C9
         """Send a document or file attachment to a WhatsApp contact or group.
 
         PARAMETERS:
-        - chat_id: WhatsApp chat ID.
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - chat_id: WhatsApp chat ID (w_chat_id). For DMs: '919876543210@c.us'.
+          For groups: '1234567890-1234567890@g.us'. Use the exact w_chat_id
+          returned by get_chats or find_contact_by_name.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
         - file_mimetype: MIME type (e.g. 'application/pdf').
         - file_filename: Filename the recipient sees.
         - caption: Optional text caption.
@@ -136,8 +144,11 @@ def register_messaging_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C9
         """Send a voice note (audio message) to a WhatsApp contact or group.
 
         PARAMETERS:
-        - chat_id: WhatsApp chat ID.
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - chat_id: WhatsApp chat ID (w_chat_id). For DMs: '919876543210@c.us'.
+          For groups: '1234567890-1234567890@g.us'. Use the exact w_chat_id
+          returned by get_chats or find_contact_by_name.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
         - voice_url: Public URL of the audio file (provide this OR voice_base64).
         - voice_base64: Base64-encoded audio data (provide this OR voice_url).
         - reply_to: Optional message ID to quote-reply to.
@@ -165,8 +176,11 @@ def register_messaging_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C9
         """Send a video to a WhatsApp contact or group.
 
         PARAMETERS:
-        - chat_id: WhatsApp chat ID.
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - chat_id: WhatsApp chat ID (w_chat_id). For DMs: '919876543210@c.us'.
+          For groups: '1234567890-1234567890@g.us'. Use the exact w_chat_id
+          returned by get_chats or find_contact_by_name.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
         - caption: Optional text caption below the video.
         - video_url: Public URL of the video (provide this OR video_base64).
         - video_base64: Base64-encoded video data (provide this OR video_url).
@@ -195,7 +209,8 @@ def register_messaging_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C9
         PARAMETERS:
         - chat_id: WhatsApp chat ID containing the message.
         - message_id: ID of the message to delete.
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
 
         OUTPUT: success.
         """
@@ -218,7 +233,8 @@ def register_messaging_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C9
         - chat_id: WhatsApp chat ID containing the message.
         - message_id: ID of the message to edit.
         - new_text: Replacement text content.
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
         - link_preview: Regenerate URL preview if a link is present (default True).
 
         OUTPUT: success, message_id, data.

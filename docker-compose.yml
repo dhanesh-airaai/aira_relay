@@ -2,7 +2,7 @@ services:
 
   # ── MongoDB ────────────────────────────────────────────────────────────────
   mongodb:
-    image: mongo:7
+    image: mongo:7.0
     container_name: aira-mongodb
     restart: unless-stopped
     ports:
@@ -14,6 +14,27 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - app-network
+
+  # ── Qdrant ────────────────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: always
+    ports:
+      - "127.0.0.1:6333:6333/tcp"
+      - "127.0.0.1:6334:6334/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    networks:
+      - app-network
 
   # ── WAHA (WhatsApp HTTP API + GOWS engine) ─────────────────────────────────
   waha:
@@ -28,13 +49,22 @@ services:
       - "127.0.0.1:3002:3000/tcp"
     volumes:
       - "./waha-plus/media:/app/.media"
+      - waha_sessions:/app/.sessions
     env_file:
       - .env                                          # single source of truth
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/3000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     depends_on:
       mongodb:
         condition: service_healthy
+    networks:
+      - app-network
 
   # ── aira-relay (Python MCP server) ────────────────────────────────────────
   relay:
@@ -52,12 +82,30 @@ services:
     environment:
       - DEBUGPY_ENABLE=${DEBUGPY_ENABLE:-false}
       - DEBUGPY_WAIT_FOR_CLIENT=${DEBUGPY_WAIT_FOR_CLIENT:-false}
+      - QDRANT_URL=http://qdrant:6333
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      - waha
-      - mongodb
+      waha:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    networks:
+      - app-network
 
 volumes:
   mongodb_data: {}
+  qdrant_storage: {}
+  waha_sessions: {}
+
+networks:
+  app-network: {}

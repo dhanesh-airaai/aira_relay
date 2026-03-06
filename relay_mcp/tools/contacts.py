@@ -26,7 +26,8 @@ def register_contact_tools(mcp: FastMCP, c: McpContainer) -> None:
         by name, or needs to pick a recipient before sending a message.
 
         PARAMETERS:
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
         - limit: Maximum contacts to return (None = all).
         - offset: Contacts to skip for pagination.
         - sort_by: Field to sort by (e.g. 'name').
@@ -55,7 +56,8 @@ def register_contact_tools(mcp: FastMCP, c: McpContainer) -> None:
 
         PARAMETERS:
         - contact_id: WhatsApp JID of the contact (e.g. '919876543210@c.us').
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
 
         OUTPUT: success, data (id, name, pushname, short_name, number, is_business, profile_pic_url).
         """
@@ -76,7 +78,8 @@ def register_contact_tools(mcp: FastMCP, c: McpContainer) -> None:
 
         PARAMETERS:
         - group_id: WhatsApp group JID (e.g. '1234567890-1234567890@g.us').
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
 
         OUTPUT: success, data (id, name, description, participants, size).
         """
@@ -86,11 +89,11 @@ def register_contact_tools(mcp: FastMCP, c: McpContainer) -> None:
         )
 
     @mcp.tool()
-    async def find_contact_by_name(
+    async def search_contact_by_name(
         query: str,
         phone_number: str,
     ) -> dict[str, Any]:
-        """Find WhatsApp contacts matching a name query using phonetic search.
+        """Search WhatsApp contacts by name using fuzzy phonetic matching.
 
         USE WHEN: The user asks to message someone by name (e.g. "message John") but
         you don't have their chat_id. Uses Metaphone phonetic matching and semantic
@@ -98,7 +101,8 @@ def register_contact_tools(mcp: FastMCP, c: McpContainer) -> None:
 
         PARAMETERS:
         - query: Name to search for (partial or phonetic OK — 'Jon' matches 'John').
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
 
         OUTPUT: success, contacts (list of w_chat_id, chat_name, description), message.
         """
@@ -127,16 +131,17 @@ def register_contact_tools(mcp: FastMCP, c: McpContainer) -> None:
         }
 
     @mcp.tool()
-    async def index_contacts(
+    async def sync_contacts(
         phone_number: str,
     ) -> dict[str, Any]:
-        """Fetch all WAHA contacts and index them for phonetic name search.
+        """Fetch all WhatsApp contacts and rebuild the phonetic search index.
 
         USE WHEN: Called once after initial setup, or when new contacts have been added
         and phonetic search results seem outdated.
 
         PARAMETERS:
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
 
         OUTPUT: status, indexed_points (number of Qdrant points written).
         """

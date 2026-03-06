@@ -5,8 +5,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp.server.fastmcp import Context
+
+from models.events import SyncChatsEvent
+from relay_mcp.llm_adapter import McpLLMAdapter
+
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import Context, FastMCP
+    from mcp.server.fastmcp import FastMCP
 
     from relay_mcp.container import McpContainer
 
@@ -35,7 +40,8 @@ def register_chat_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C901
 
         PARAMETERS:
         - chat_id: WhatsApp chat ID. For DMs: 'phone@c.us'. For groups: 'groupid@g.us'.
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
         - limit: Maximum messages to fetch, newest first (default 100).
         - offset: Messages to skip from newest (pagination).
         - from_timestamp: Only include messages after this Unix timestamp.
@@ -46,8 +52,6 @@ def register_chat_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C901
 
         OUTPUT: summary, message_count.
         """
-        from relay_mcp.llm_adapter import McpLLMAdapter
-
         is_group = chat_type == "g"
         llm = c.openclaw if c.openclaw.is_configured else McpLLMAdapter(ctx)
         return await c.message_service.get_messages_summary(
@@ -82,7 +86,8 @@ def register_chat_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C901
 
         PARAMETERS:
         - chat_id: WhatsApp chat ID. For DMs: 'phone@c.us'. For groups: 'groupid@g.us'.
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
         - limit: Maximum messages to fetch (default 100).
         - offset: Messages to skip from newest (pagination).
         - from_timestamp: Only return messages after this Unix timestamp.
@@ -121,12 +126,11 @@ def register_chat_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C901
         - Returns an LLM-generated summary of what needs attention.
 
         PARAMETERS:
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
 
         OUTPUT: summary, dm_count, group_count.
         """
-        from relay_mcp.llm_adapter import McpLLMAdapter
-
         user = await c.user_service.get_or_create(phone_number)
         llm = c.openclaw if c.openclaw.is_configured else McpLLMAdapter(ctx)
         result = await c.message_service.scan_unreplied(
@@ -150,7 +154,8 @@ def register_chat_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C901
         pick a chat before fetching messages.
 
         PARAMETERS:
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
         - limit: Maximum chats to return (default 5000).
         - offset: Chats to skip for pagination.
         - chat_type: 'chat' for DMs, 'group' for groups, None for all.
@@ -184,14 +189,12 @@ def register_chat_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C901
         - Pushes a 'sync_chats' event via get_incoming_message when done.
 
         PARAMETERS:
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
 
         OUTPUT (immediate): message confirming background start.
         ASYNC RESULT (via get_incoming_message): event='sync_chats', success, total_synced, descriptions.
         """
-        from relay_mcp.llm_adapter import McpLLMAdapter
-        from models.events import SyncChatsEvent
-
         user = await c.user_service.get_or_create(phone_number)
         llm = c.openclaw if c.openclaw.is_configured else McpLLMAdapter(ctx)
 
@@ -227,13 +230,12 @@ def register_chat_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C901
         are missing or stale.
 
         PARAMETERS:
-        - phone_number: Connected WhatsApp phone number with country code, no +.
+        - phone_number: Connected WhatsApp phone number — country code followed by number,
+          no spaces or symbols (e.g. 917995154159).
         - limit: Maximum chats to describe (default 50).
 
         OUTPUT: processed (count), skipped (count).
         """
-        from relay_mcp.llm_adapter import McpLLMAdapter
-
         user = await c.user_service.get_or_create(phone_number)
         llm = c.openclaw if c.openclaw.is_configured else McpLLMAdapter(ctx)
         return await c.chat_service.generate_descriptions(

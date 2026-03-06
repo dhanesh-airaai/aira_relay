@@ -55,10 +55,12 @@ class OpenClawAdapter:
 
         endpoint = "hooks/agent" if use_agent_hook else "hooks/wake"
         url = f"{self._url.rstrip('/')}/{endpoint}"
+        text = data.get("body") or data.get("event") or data.get("type") or "event"
         payload = {
-            "message": data,
+            "text": text,
             "name": self._agent_name,
             "wakeMode": "now",
+            "context": data,
         }
         headers = {
             "Content-Type": "application/json",
@@ -66,6 +68,11 @@ class OpenClawAdapter:
         }
         try:
             resp = await self._http.post(url, json=payload, headers=headers, timeout=10.0)
+            if not resp.is_success:
+                logger.warning(
+                    "OpenClaw %s returned %s: %s",
+                    endpoint, resp.status_code, resp.text,
+                )
             resp.raise_for_status()
             logger.debug("Forwarded event to OpenClaw (%s)", endpoint)
             return resp.json() if resp.content else None

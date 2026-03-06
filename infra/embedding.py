@@ -23,9 +23,8 @@ class EmbeddingAdapter:
 
             self._client = AsyncAzureOpenAI(
                 azure_endpoint=settings.azure_embedding_endpoint
-                or settings.azure_openai_endpoint
                 or "",
-                api_key=settings.azure_embedding_api_key or settings.azure_openai_api_key or "",
+                api_key=settings.azure_embedding_api_key  or "",
                 api_version=settings.azure_embedding_api_version,
             )
             self._model = settings.azure_embedding_deployment
