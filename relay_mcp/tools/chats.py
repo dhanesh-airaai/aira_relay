@@ -176,6 +176,7 @@ def register_chat_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C901
     @mcp.tool()
     async def sync_chats(
         phone_number: str,
+        ctx: Context,
     ) -> dict[str, Any]:
         """Sync all WhatsApp chats from WAHA into the local database (runs in background).
 
@@ -195,13 +196,14 @@ def register_chat_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C901
         ASYNC RESULT (via get_incoming_message): event='sync_chats', success, total_synced, descriptions.
         """
         user = await c.user_service.get_or_create(phone_number)
+        llm = c.openclaw if getattr(c.openclaw, "is_configured", False) else McpLLMAdapter(ctx)
 
         async def _run() -> None:
             result = await c.chat_service.sync_chats(
                 session=phone_number, user_id=user.id
             )
             desc_result = await c.chat_service.generate_descriptions(
-                session=phone_number, user_id=user.id, llm=c.openclaw, limit=50
+                session=phone_number, user_id=user.id, llm=llm, limit=50
             )
             event = SyncChatsEvent(
                 success=result.success,
@@ -235,7 +237,7 @@ def register_chat_tools(mcp: FastMCP, c: McpContainer) -> None:  # noqa: C901
         OUTPUT: processed (count), skipped (count).
         """
         user = await c.user_service.get_or_create(phone_number)
-        llm = McpLLMAdapter(ctx)
+        llm = c.openclaw if getattr(c.openclaw, "is_configured", False) else McpLLMAdapter(ctx)
         return await c.chat_service.generate_descriptions(
             session=phone_number, user_id=user.id, llm=llm, limit=limit
         )
