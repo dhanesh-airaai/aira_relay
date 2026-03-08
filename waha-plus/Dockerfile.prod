@@ -1,0 +1,109 @@
+ARG NODE_IMAGE_TAG=24.11-bookworm-slim
+
+#
+# Build
+#
+FROM node:${NODE_IMAGE_TAG} AS build
+
+RUN apt-get update && apt-get install -y git python3 build-essential && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /git
+COPY package.json yarn.lock ./
+ENV YARN_CHECKSUM_BEHAVIOR=update
+
+RUN npm install -g corepack && corepack enable
+RUN yarn set version 4.9.2
+RUN yarn install
+
+ADD . /git
+RUN yarn install
+RUN yarn build && find ./dist -name "*.d.ts" -delete
+
+#
+# Dashboard
+#
+FROM node:${NODE_IMAGE_TAG} AS dashboard
+
+RUN apt-get update && apt-get install -y jq wget unzip && rm -rf /var/lib/apt/lists/*
+
+COPY waha.config.json /tmp/waha.config.json
+RUN \
+    WAHA_DASHBOARD_GITHUB_REPO=$(jq -r '.waha.dashboard.repo' /tmp/waha.config.json) && \
+    WAHA_DASHBOARD_SHA=$(jq -r '.waha.dashboard.ref' /tmp/waha.config.json) && \
+    wget https://github.com/${WAHA_DASHBOARD_GITHUB_REPO}/archive/${WAHA_DASHBOARD_SHA}.zip \
+    && unzip ${WAHA_DASHBOARD_SHA}.zip -d /tmp/dashboard \
+    && mkdir -p /dashboard \
+    && mv /tmp/dashboard/dashboard-${WAHA_DASHBOARD_SHA}/* /dashboard/ \
+    && rm -rf ${WAHA_DASHBOARD_SHA}.zip /tmp/dashboard
+
+#
+# GOWS - use slim image, we're only downloading a binary
+#
+FROM debian:bookworm-slim AS gows
+
+RUN apt-get update && apt-get install -y jq wget ca-certificates && rm -rf /var/lib/apt/lists/*
+
+COPY waha.config.json /tmp/waha.config.json
+RUN \
+    GOWS_GITHUB_REPO=$(jq -r '.waha.gows.repo' /tmp/waha.config.json) && \
+    GOWS_SHA=$(jq -r '.waha.gows.ref' /tmp/waha.config.json) && \
+    ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; \
+    elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; \
+    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
+    mkdir -p /gows/bin && \
+    wget -O /gows/bin/gows https://github.com/${GOWS_GITHUB_REPO}/releases/download/${GOWS_SHA}/gows-${ARCH} && \
+    chmod +x /gows/bin/gows
+
+#
+# Final
+#
+FROM node:${NODE_IMAGE_TAG} AS release
+
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
+# Install all runtime dependencies in a single layer
+ARG OPUSTAGS_VERSION="1.10.1"
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      ffmpeg \
+      libvips \
+      curl \
+      libc6 \
+      tini \
+      build-essential cmake pkg-config libogg-dev; \
+    # Build opustags from source
+    curl -L https://github.com/fmang/opustags/archive/refs/tags/${OPUSTAGS_VERSION}.tar.gz \
+      | tar -xz -C /tmp; \
+    cd /tmp/opustags-${OPUSTAGS_VERSION}; \
+    cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release; \
+    cmake --build build --config Release; \
+    cmake --install build; \
+    # Cleanup build deps and caches
+    rm -rf /tmp/opustags-${OPUSTAGS_VERSION}; \
+    apt-get purge -y --auto-remove build-essential cmake pkg-config libogg-dev; \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY package.json ./
+COPY --from=build /git/node_modules ./node_modules
+COPY --from=build /git/dist ./dist
+COPY --from=dashboard /dashboard ./dist/dashboard
+COPY --from=gows /gows/bin/gows /app/gows
+COPY scripts/init-waha.js ./scripts/init-waha.js
+RUN chmod +x ./scripts/init-waha.js \
+  && printf '%s\n' '#!/bin/sh' 'exec node /app/scripts/init-waha.js "$@"' > /usr/local/bin/init-waha \
+  && chmod +x /usr/local/bin/init-waha
+
+ENV WHATSAPP_DEFAULT_ENGINE=GOWS
+ENV WAHA_GOWS_PATH=/app/gows
+ENV WAHA_GOWS_SOCKET=/tmp/gows.sock
+ENV GODEBUG=netdns=cgo
+
+COPY entrypoint.sh /entrypoint.sh
+
+EXPOSE 3000
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/entrypoint.sh"]

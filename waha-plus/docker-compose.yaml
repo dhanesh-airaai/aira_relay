@@ -1,0 +1,100 @@
+# https://waha.devlike.pro/docs/how-to/install/
+services:
+  waha:
+    restart: always
+    # https://waha.devlike.pro/docs/how-to/engines/#docker-images
+    # https://portal.devlike.pro/docker-image
+    # image: devlikeapro/waha-plus
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        gows_src: ../gows
+
+    # Add "dns" if you have a problem with resolving "web.whatsapp.com"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '100m'
+        max-file: '10'
+
+    ports:
+      - '127.0.0.1:3002:3000/tcp'
+
+    volumes:
+      # Sessions are now stored in MongoDB — no local .sessions volume needed.
+      # Uncomment the line below only if you switch back to SQLite/local storage.
+      # - './sessions:/app/.sessions'
+
+      # Save media files (LOCAL storage)
+      # https://waha.devlike.pro/docs/how-to/storages/#save-media-files-between-the-container-restarts
+      - './media:/app/.media'
+
+    env_file:
+      - .env
+
+    container_name: waha-local
+
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+
+    networks:
+      - default
+      - app-network
+
+  # MongoDB — used for both WAHA session metadata AND GOWS whatsmeow store
+  mongodb:
+    image: mongo
+    container_name: mongodb
+    restart: always
+    ports:
+      - '127.0.0.1:27017:27017/tcp'
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=mongouser
+      - MONGO_INITDB_ROOT_PASSWORD=mongopassword
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+    networks:
+      - default
+      - app-network
+
+# NOTE: Only if you're using S3 to save media files
+# https://waha.devlike.pro/docs/how-to/storages/#media---s3
+# Uncomment this block if you're using AWS S3
+#  minio:
+#    image: quay.io/minio/minio
+#    container_name: minio
+#    restart: always
+#    ports:
+#      - '127.0.0.1:9000:9000'
+#      - '127.0.0.1:9001:9001'
+#    environment:
+#      MINIO_REGION: 'eu-west-2'
+#      MINIO_ROOT_USER: 'minioadmin'
+#      MINIO_ROOT_PASSWORD: 'minioadmin'
+#    volumes:
+#      - minio_data:/data
+#    command: server /data --console-address ":9001"
+#    logging:
+#      driver: "json-file"
+#      options:
+#        max-size: "100m"
+#        max-file: "10"
+
+networks:
+  app-network:
+    external: true
+
+volumes:
+  mongodb_data: {}
+  minio_data: {}
+  pg_data: {}

@@ -1,0 +1,13 @@
+# Debug override - run with:
+#   docker compose -f docker-compose.yaml -f docker-compose.debug.yaml up --build
+services:
+  waha:
+    ports:
+      - '127.0.0.1:3000:3000/tcp'
+      - '127.0.0.1:9229:9229/tcp'   # Node.js debugger
+    environment:
+      - NODE_OPTIONS=--inspect=0.0.0.0:9229
+    volumes:
+      # Mount source + dist for source-map debugging
+      - './dist:/app/dist'
+      - './src:/app/src'
