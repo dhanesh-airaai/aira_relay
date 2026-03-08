@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from models.events import IncomingMessageEvent, RelayEvent
+from models.events import RelayEvent
 
 if TYPE_CHECKING:
     from infra.openclaw import OpenClawAdapter
@@ -22,7 +22,4 @@ class OpenClawHandler:
     async def handle(self, event: RelayEvent) -> None:
         if not self._adapter.is_configured:
             return
-        # Incoming messages → agent hook (LLM processing)
-        # All other events → wake hook (lightweight notification)
-        use_agent = isinstance(event, IncomingMessageEvent)
-        await self._adapter.push_event(event.model_dump(), use_agent_hook=use_agent)
+        await self._adapter.push_event(event.model_dump())

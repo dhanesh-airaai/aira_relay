@@ -18,4 +18,5 @@ class ILLMAdapter(Protocol):
         *,
         system_prompt: str | None = None,
         max_tokens: int = 1024,
+        session: str = "",
     ) -> str: ...

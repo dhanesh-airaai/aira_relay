@@ -63,18 +63,54 @@ class ChatService:
             return SyncResult(success=False, message=f"Sync failed: {exc}", total_synced=0)
 
     async def _sync_once(self, *, session: str, user_id: str) -> int:
-        lid_mappings = await self._messaging.get_all_lids(session=session)
+        lid_result, all_chats, all_contacts = await asyncio.gather(
+            self._messaging.get_all_lids(session=session),
+            self._messaging.get_all_chats(
+                session=session,
+                sort_by="conversationTimestamp",
+                sort_order="desc",
+            ),
+            self._messaging.get_all_contacts(session=session),
+            return_exceptions=True,
+        )
+
+        if isinstance(lid_result, BaseException):
+            logger.warning("get_all_lids failed (session may not be WORKING): %s", lid_result)
+            lid_mappings: list = []
+        else:
+            lid_mappings = lid_result
+
+        if isinstance(all_chats, BaseException):
+            raise all_chats  # chats are required — propagate
+        if isinstance(all_contacts, BaseException):
+            logger.warning("get_all_contacts failed: %s", all_contacts)
+            all_contacts = []
+
         lid_to_phone: dict[str, str] = {item.lid: item.pn for item in lid_mappings}
 
-        all_chats = await self._messaging.get_all_chats(
-            session=session,
-            sort_by="conversationTimestamp",
-            sort_order="desc",
-        )
+        # Build a JID → name lookup from the contacts list
+        contact_name_map: dict[str, str] = {}
+        for contact in all_contacts:
+            cid = str(contact.get("id") or "")
+            if not cid:
+                continue
+            name = (
+                contact.get("name")
+                or contact.get("pushname")
+                or ""
+            )
+            if name:
+                # Normalise: strip @c.us suffix for key lookup
+                key = cid.split("@")[0]
+                contact_name_map[key] = name
+                contact_name_map[cid] = name
 
         groups = [c for c in all_chats if is_group_jid(str(c.get("id", "")))]
         dms = [c for c in all_chats if not is_group_jid(str(c.get("id", "")))]
-        logger.info("Fetched %d total chats for user %s (%d groups, %d DMs)", all_chats, user_id, len(groups), len(dms))
+        logger.info(
+            "Fetched %d total chats, %d contacts for user %s (%d groups, %d DMs)",
+            len(all_chats), len(all_contacts), user_id, len(groups), len(dms),
+        )
 
         chats_to_store: list[dict[str, Any]] = []
 
@@ -94,7 +130,7 @@ class ChatService:
                 }
             )
 
-        # DM chats — resolve LIDs and fetch missing names in parallel
+        # DM chats — resolve LIDs, fill names from contact map, then fetch stragglers
         dm_info: list[dict[str, Any]] = []
         needing_name: list[tuple[int, str]] = []
 
@@ -103,7 +139,10 @@ class ChatService:
             if not raw_id:
                 continue
             chat_id = lid_to_phone.get(raw_id, raw_id) if raw_id.endswith("@lid") else raw_id
+            # Name from WAHA chat list, then fall back to contacts map
             chat_name = str(dm.get("name") or "")
+            if not chat_name:
+                chat_name = contact_name_map.get(chat_id) or contact_name_map.get(chat_id.split("@")[0]) or ""
             idx = len(dm_info)
             dm_info.append(
                 {
@@ -156,7 +195,7 @@ class ChatService:
                     for c in chats_to_store
                 ]
             )
-            logger.info("Synced %d chats for user %s", chats_to_store, user_id)
+            logger.info("Synced %d chats for user %s", len(chats_to_store), user_id)
             # Index all synced chats in the phonetic search
             contacts_for_index = [
                 {"id": c["w_chat_id"], "name": c["chat_name"]}
@@ -334,6 +373,7 @@ class ChatService:
                         + "\n".join(lines),
                         system_prompt=_DESCRIPTION_SYSTEM,
                         max_tokens=200,
+                        session=session,
                     )
                     if desc:
                         await self._chat_repo.upsert(

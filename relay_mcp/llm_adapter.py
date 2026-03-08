@@ -25,6 +25,7 @@ class McpLLMAdapter:
         *,
         system_prompt: str | None = None,
         max_tokens: int = 1024,
+        session: str = "",
     ) -> str:
         result = await self._ctx.request_context.session.create_message(
             messages=[

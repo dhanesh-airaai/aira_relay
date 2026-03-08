@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from core.chat_service import ChatService
     from core.user_service import UserService
     from ports.event_bus import IEventBus
+    from ports.llm import ILLMAdapter
     from ports.messaging import IMessagingPort
     from utils.concurrency import TaskRegistry
 
@@ -33,12 +34,14 @@ class WebhookProcessor:
         chat_service: ChatService,
         event_bus: IEventBus,
         task_registry: TaskRegistry,
+        llm: ILLMAdapter | None = None,
     ) -> None:
         self._messaging = messaging
         self._user_service = user_service
         self._chat_service = chat_service
         self._event_bus = event_bus
         self._tasks = task_registry
+        self._llm = llm
 
     # ------------------------------------------------------------------
     # Incoming message
@@ -180,11 +183,18 @@ class WebhookProcessor:
             result = await self._chat_service.sync_chats(
                 session=session, user_id=user.id
             )
+            descriptions: dict = {}
+            if self._llm:
+                desc_result = await self._chat_service.generate_descriptions(
+                    session=session, user_id=user.id, llm=self._llm, limit=50
+                )
+                descriptions = desc_result.get("descriptions", {})
             sync_event = SyncChatsEvent(
                 success=result.success,
                 message=result.message,
                 total_synced=result.total_synced,
                 session=session,
+                descriptions=descriptions,
             )
             await self._event_bus.publish(sync_event)
             logger.info("Chat sync complete for session %s", session)

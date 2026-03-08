@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     openclaw_agent_name: str = "MCP"         # name field in the hook payload
     openclaw_gateway_token: str | None = None
 
+    # OpenRouter LLM (optional — used for chat description generation)
+    openrouter_api_key: str | None = None
+    openrouter_model: str = "openai/gpt-4o-mini"
+
     # Server ports
     mcp_port: int = 8000
     webhook_port: int = 8001

@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from core.user_service import UserService
     from events.bus import EventBus
     from events.mcp_handler import McpEventHandler
-    from infra.openclaw import OpenClawAdapter
+    from ports.llm import ILLMAdapter
     from utils.concurrency import TaskRegistry
 
 
@@ -31,7 +31,7 @@ class McpContainer:
         contact_service: ContactService,
         connection_service: ConnectionService,
         event_bus: EventBus,
-        openclaw: OpenClawAdapter,
+        openclaw: ILLMAdapter,
         task_registry: TaskRegistry,
         mcp_handler: McpEventHandler,
     ) -> None:

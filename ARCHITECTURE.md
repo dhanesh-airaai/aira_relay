@@ -184,10 +184,6 @@ class WahaClient:
     async def download_media(self, url: str) -> tuple[str, bytes]:
         # GET with X-Api-Key header; returns (content_type, raw_bytes)
 
-# infra/openclaw.py — satisfies ILLMAdapter
-class OpenClawAdapter:
-    async def complete(self, prompt, *, system_prompt=None, max_tokens=1024) -> str:
-        # POST to OpenClaw /v1/chat/completions
 
 # infra/fastembed_adapter.py — satisfies IEmbeddingAdapter
 class FastEmbedAdapter:

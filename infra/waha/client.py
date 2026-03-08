@@ -404,13 +404,16 @@ class WahaClient:
 
         contacts: list[dict[str, Any]] = await self._get(f"{self._base}/contacts/all", params)
 
-        # Resolve LIDs in the id field
-        lid_mappings = await self.get_all_lids(session=session)
-        lid_to_phone = {m.lid: m.pn for m in lid_mappings}
-        for contact in contacts:
-            cid = str(contact.get("id", ""))
-            if "@lid" in cid and cid in lid_to_phone:
-                contact["id"] = lid_to_phone[cid]
+        # Resolve LIDs in the id field (best-effort — session may not be WORKING)
+        try:
+            lid_mappings = await self.get_all_lids(session=session)
+            lid_to_phone = {m.lid: m.pn for m in lid_mappings}
+            for contact in contacts:
+                cid = str(contact.get("id", ""))
+                if "@lid" in cid and cid in lid_to_phone:
+                    contact["id"] = lid_to_phone[cid]
+        except Exception as exc:
+            logger.warning("LID resolution skipped in get_all_contacts: %s", exc)
         return contacts
 
     async def get_contact_details(self, *, contact_id: str, session: str) -> ContactDetails:

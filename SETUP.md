@@ -128,12 +128,62 @@ Useful local URLs after startup:
 
 ### Step 5: Use the app
 
-After the stack is up:
+After the stack is up, follow these steps in order.
 
-1. Connect your MCP client to the relay MCP HTTP endpoint on `http://localhost:8000`.
-2. Use the `connect_whatsapp` MCP tool to create and pair a WhatsApp session.
-3. Wait for WAHA session events until the session reaches `WORKING`.
-4. Use tools such as `sync_chats`, `get_chats`, `get_messages`, and `send_text_message`.
+#### 5a — Connect your MCP client
+
+Connect your MCP client to the relay MCP HTTP endpoint:
+
+```
+http://localhost:8000/mcp
+```
+
+#### 5b — Connect WhatsApp
+
+Ask the agent to connect WhatsApp and send you the pairing code. Use this exact prompt:
+
+```
+Connect WhatsApp and send me the request code.
+```
+
+The agent will call the `connect_whatsapp` tool, which creates a new WAHA session and returns a pairing code.
+
+#### 5c — Pair your phone
+
+1. Open WhatsApp on your phone.
+2. Go to **Settings → Linked Devices → Link a Device**.
+3. When prompted, tap **Link with phone number instead**.
+4. Enter the pairing code that the agent returned.
+
+Your phone will confirm the link. This usually takes a few seconds.
+
+#### 5d — Wait for the session to become active
+
+After pairing, WAHA exchanges credentials with WhatsApp in the background. Ask the agent to confirm when the session is ready:
+
+```
+Is the WhatsApp session connected and working?
+```
+
+The agent will check the session status. Wait until it reports `WORKING` before sending any messages. If it reports `SCAN_QR_CODE` or another transitional state, wait a moment and ask again.
+
+#### 5e — Start using WhatsApp tools
+
+Once the session is `WORKING`, you can use all available tools:
+
+```
+Sync my chats.
+```
+
+```
+Show me my recent chats.
+```
+
+```
+Send a WhatsApp message to +1234567890 saying "Hello".
+```
+
+Available tools include `sync_chats`, `get_chats`, `get_messages`, and `send_text_message`.
 
 If you only want to confirm the infrastructure is running, Step 4 is enough.
 
@@ -356,7 +406,7 @@ Example `~/.openclaw/openclaw.json`:
   "hooks": {
     "enabled": true,
     "path": "/hooks",
-    "token": "YOUR_WEBHOOK_TOKEN"
+    "token": "YOUR_WEBHOOK_TOKEN" // genereate the token if not present
   },
   "gateway": {
     "auth": {
@@ -681,6 +731,53 @@ That means:
 - It connected to the AiRA Relay MCP server.
 - It discovered tools from the relay.
 - Those tools are now registered and available to the OpenClaw agent.
+
+---
+
+### Step 8 — Connect WhatsApp through the agent
+
+Once the tools are registered and the relay is running, you need to pair a WhatsApp account before any messaging tools will work.
+
+#### 8a — Ask the agent to connect WhatsApp
+
+In the OpenClaw agent chat, type exactly:
+
+```
+Connect WhatsApp and send me the request code.
+```
+
+The agent will call the `connect_whatsapp` tool. It will return a **pairing code** (e.g. `ABC1-2345`).
+
+#### 8b — Pair your phone
+
+1. Open WhatsApp on your phone.
+2. Go to **Settings → Linked Devices → Link a Device**.
+3. Tap **Link with phone number instead** when prompted.
+4. Enter the pairing code the agent gave you.
+
+Your phone will confirm the link within a few seconds.
+
+#### 8c — Confirm the session is active
+
+Ask the agent:
+
+```
+Is the WhatsApp session connected and working?
+```
+
+The agent will check the session status. Wait until it reports `WORKING`. If it reports a transitional state like `SCAN_QR_CODE` or `CONNECTING`, wait a moment and ask again.
+
+#### 8d — Start using WhatsApp
+
+Once the session is `WORKING`, all WhatsApp tools are available. For example:
+
+```
+Sync my chats and show me the most recent ones.
+```
+
+```
+Send a WhatsApp message to +1234567890 saying "Hello from AiRA".
+```
 
 ---
 

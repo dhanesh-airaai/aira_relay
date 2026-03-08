@@ -36,6 +36,7 @@ async def lifespan() -> AsyncIterator[AppComponents]:
     from infra.fastembed_adapter import FastEmbedAdapter
     from infra.mongodb.manager import MongoManager
     from infra.openclaw import OpenClawAdapter
+    from infra.openrouter import OpenRouterAdapter
     from infra.qdrant.manager import QdrantManager
     from infra.waha.client import WahaClient
 
@@ -74,6 +75,7 @@ async def lifespan() -> AsyncIterator[AppComponents]:
     embedding = FastEmbedAdapter()
 
     openclaw = OpenClawAdapter(settings)
+    openrouter = OpenRouterAdapter(settings)
 
     # ------------------------------------------------------------------
     # Repositories
@@ -172,7 +174,7 @@ async def lifespan() -> AsyncIterator[AppComponents]:
         contact_service=contact_service,
         connection_service=connection_service,
         event_bus=event_bus,
-        openclaw=openclaw,
+        openclaw=openrouter,
         task_registry=task_registry,
         mcp_handler=mcp_event_handler,
     )
@@ -191,6 +193,7 @@ async def lifespan() -> AsyncIterator[AppComponents]:
         chat_service=chat_service,
         event_bus=event_bus,
         task_registry=task_registry,
+        llm=openrouter if openrouter.is_configured else None,
     )
 
     webhook_app = build_webhook_app(
