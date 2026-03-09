@@ -1,175 +1,154 @@
-## AiRA Relay
+# AiRA Relay — Setup Guide
 
-AiRA Relay is a Python MCP server and webhook receiver that sits in front of WAHA
-(WhatsApp HTTP API). It exposes WhatsApp operations as MCP tools, persists state
-in MongoDB, and optionally uses Qdrant plus embeddings for contact indexing and
-phonetic search.
+## What Is This
 
-This repository runs four services through `docker-compose`:
+AiRA Relay is a Python server that puts WhatsApp capabilities inside an AI agent.
+It exposes WhatsApp operations as MCP tools (send messages, read chats, search contacts)
+and listens for incoming WhatsApp events to route them back to your agent in real time.
 
-- `relay`: the Python MCP server and WAHA webhook receiver
-- `waha`: the WhatsApp HTTP API container
-- `mongodb`: persistent storage for users, chats, and session state
-- `qdrant`: vector storage used for contact indexing and phonetic search
+**What you will end up with after this guide:**
 
-## Before You Start
+```
+┌─────────────────┐        MCP tools         ┌──────────────────────┐
+│   Your AI Agent │ ◄──────────────────────► │   AiRA Relay (8000)  │
+│ (Claude / MCP)  │                           │   MCP HTTP server    │
+└─────────────────┘                           └──────────┬───────────┘
+                                                         │ webhooks + API
+                                              ┌──────────▼───────────┐
+                                              │   WAHA (3002)        │
+                                              │   WhatsApp HTTP API  │
+                                              └──────────┬───────────┘
+                                                         │
+                                              ┌──────────▼───────────┐
+                                              │   Your WhatsApp      │
+                                              │   (linked phone)     │
+                                              └──────────────────────┘
+
+Supporting services: MongoDB (27017) · Qdrant (6333)
+```
+
+---
+
+## Prerequisites
 
 - Docker and Docker Compose v2
-- All of these ports free on your machine: `3002`, `8000`, `8001`, `27017`, `6333`, `6334`
-- A WhatsApp number you want to link through WAHA
+- These ports free on your machine: `3002`, `8000`, `8001`, `27017`, `6333`, `6334`
+- A WhatsApp number you want to link
 
-Optional for local host development:
+> **Local development only (optional):** Python 3.13 and `uv`. Use Docker unless you specifically need to run the relay directly on your machine.
 
-- Python `3.13`
-- `uv`
+---
 
-Use the Docker flow unless you specifically want to run the Python app directly
-on your machine. The Docker flow is the default setup for this repository.
+## Docker Setup
 
-## Run With Docker
-
-### Step 1: Create the `.env` file
-
-Copy the example file:
+### Step 1 — Create the `.env` file
 
 ```bash
 cp .env.example .env
 ```
 
-Do not use `.env.example` as-is. You need to edit a few values before the app
-will start correctly.
-
-Generate a fresh `TOKEN_SECRET`:
+Then generate a fresh `TOKEN_SECRET`:
 
 ```bash
 openssl rand -hex 32
 ```
 
-### Step 2: Edit the required `.env` values
+### Step 2 — Set the required secrets
 
-Open `.env` and set these values.
-
-You must replace the placeholder secrets with your own values:
+Open `.env` and replace these four placeholder values. Everything else can stay as-is for a standard Docker setup.
 
 ```dotenv
-TOKEN_SECRET=replace-with-a-new-base64-secret
+TOKEN_SECRET=<output from openssl rand -hex 32>
 
-WAHA_API_KEY=replace-with-a-random-shared-api-key
-WAHA_WEBHOOK_SECRET=replace-with-a-random-shared-webhook-secret
-WAHA_DASHBOARD_PASSWORD=replace-with-a-random-shared-webhook-secret
-WHATSAPP_HOOK_HMAC_KEY=replace-with-the-same-value-as-WAHA_WEBHOOK_SECRET
+WAHA_API_KEY=<any random string>
+WAHA_WEBHOOK_SECRET=<any random string>
+WAHA_DASHBOARD_PASSWORD=<any random string>
+
+# Must be identical to WAHA_WEBHOOK_SECRET
+WHATSAPP_HOOK_HMAC_KEY=<same value as WAHA_WEBHOOK_SECRET>
 ```
 
-For Docker Compose, these service URLs must be set exactly like this:
+The service URLs below are pre-configured for Docker Compose. **Do not change them** unless you have a port conflict:
 
 ```dotenv
 WAHA_BASE_URL=http://waha:3000/api
-WHATSAPP_HOOK_URL=http://relay:<WEBHOOK_PORT>/webhook/waha
-
+WHATSAPP_HOOK_URL=http://relay:8001/webhook/waha
 MONGO_URI=mongodb://mongodb:27017
 WHATSAPP_SESSIONS_MONGO_URL=mongodb://mongodb:27017
-MONGO_DB_NAME=aira_relay
 ```
 
-You usually do not need to change these unless you have a port conflict:
-
-```dotenv
-MCP_PORT=8000
-WEBHOOK_PORT=8001
-DEBUGPY_PORT=5678
-```
-
-Important rules:
-
-- `WAHA_BASE_URL` should include `/api`.
-- `WAHA_WEBHOOK_SECRET` and `WHATSAPP_HOOK_HMAC_KEY` must be identical.
-- In Docker Compose, the `relay` service is forced to use the internal Qdrant service URL `http://qdrant:6333`, so the `.env` value is only relevant for host-mode runs.
-
-### Step 3: Build and start the services
+### Step 3 — Build and start the stack
 
 ```bash
 docker compose up --build
 ```
 
-This starts all four containers:
+This starts four containers:
 
-- MongoDB on `127.0.0.1:27017`
-- Qdrant on `127.0.0.1:6333` and `127.0.0.1:6334`
-- WAHA on `127.0.0.1:3002`
-- Relay MCP HTTP on `127.0.0.1:${MCP_PORT}`
-- Relay webhook receiver on `127.0.0.1:${WEBHOOK_PORT}`
+| Service | Port |
+| --- | --- |
+| Relay MCP server | `localhost:8000` |
+| Relay webhook receiver | `localhost:8001` |
+| WAHA (WhatsApp HTTP API) | `localhost:3002` |
+| MongoDB | `localhost:27017` |
+| Qdrant | `localhost:6333` |
 
-### Step 4: Verify the containers are healthy
-
-Check container status:
+### Step 4 — Verify everything is running
 
 ```bash
 docker compose ps
 ```
 
-Then verify the relay health endpoint:
+Then hit the health endpoint:
 
 ```bash
 curl http://localhost:8001/health
 ```
 
-Expected response:
+Expected response: `{"status":"ok"}`
 
-```bash
-{"status":"ok"}
-```
+Useful URLs once the stack is up:
 
-Useful local URLs after startup:
-
-- WAHA dashboard / Swagger: `http://localhost:3002/`
-- Relay webhook health: `http://localhost:8001/health`
-- Relay MCP HTTP server: `http://localhost:8000`
+- Relay MCP server: `http://localhost:8000/mcp`
+- WAHA dashboard + Swagger: `http://localhost:3002/`
 - Qdrant: `http://localhost:6333`
 
-### Step 5: Use the app
+---
 
-After the stack is up, follow these steps in order.
+## Connect WhatsApp
 
-#### 5a — Connect your MCP client
+### 1 — Connect the session
 
-Connect your MCP client to the relay MCP HTTP endpoint:
-
-```
-http://localhost:8000/mcp
-```
-
-#### 5b — Connect WhatsApp
-
-Ask the agent to connect WhatsApp and send you the pairing code. Use this exact prompt:
+Ask your AI agent:
 
 ```
 Connect WhatsApp and send me the request code.
 ```
 
-The agent will call the `connect_whatsapp` tool, which creates a new WAHA session and returns a pairing code.
+The agent calls `connect_whatsapp`, creates a WAHA session, and returns a pairing code (e.g. `ABC1-2345`).
 
-#### 5c — Pair your phone
+### 2 — Pair your phone
 
 1. Open WhatsApp on your phone.
 2. Go to **Settings → Linked Devices → Link a Device**.
-3. When prompted, tap **Link with phone number instead**.
-4. Enter the pairing code that the agent returned.
+3. Tap **Link with phone number instead**.
+4. Enter the pairing code.
 
-Your phone will confirm the link. This usually takes a few seconds.
+Your phone confirms the link within a few seconds.
 
-#### 5d — Wait for the session to become active
+### 3 — Wait for the session to become active
 
-After pairing, WAHA exchanges credentials with WhatsApp in the background. Ask the agent to confirm when the session is ready:
+Ask your agent:
 
 ```
 Is the WhatsApp session connected and working?
 ```
 
-The agent will check the session status. Wait until it reports `WORKING` before sending any messages. If it reports `SCAN_QR_CODE` or another transitional state, wait a moment and ask again.
+Wait until the agent reports `WORKING`. If it reports a transitional state (`SCAN_QR_CODE`, `CONNECTING`), wait a moment and ask again.
 
-#### 5e — Start using WhatsApp tools
+### 4 — Start using WhatsApp tools
 
-Once the session is `WORKING`, you can use all available tools:
+Once the session is `WORKING`:
 
 ```
 Sync my chats.
@@ -183,130 +162,56 @@ Show me my recent chats.
 Send a WhatsApp message to +1234567890 saying "Hello".
 ```
 
-Available tools include `sync_chats`, `get_chats`, `get_messages`, and `send_text_message`.
+Available tools include `connect_whatsapp`, `sync_chats`, `get_chats`, `get_messages`, `send_text_message`, and more.
 
-If you only want to confirm the infrastructure is running, Step 4 is enough.
+---
 
-### Step 6: Stop the stack
+## Connect to an AI Agent
 
-```bash
-docker compose down
+### Any MCP client
+
+Point your MCP client at:
+
+```
+http://localhost:8000/mcp
 ```
 
-## Local Host Development
+That's it. All relay tools will be available to your agent.
 
-Use this only if you want to run the Python relay directly on your machine.
+---
 
-### Step 1: Start external services
+### OpenClaw (optional)
 
-Start these services first:
+> **Skip this section** if you are not using OpenClaw. The relay works with any MCP client.
 
-1. MongoDB on `localhost:27017`
-2. Qdrant on `localhost:6333`
-3. WAHA on `localhost:3002`
+This walks you through making OpenClaw aware of all AiRA Relay tools via a local plugin called `mcp-bridge`.
 
-### Step 2: Update `.env` for host mode
+**Before you start:**
+- OpenClaw is installed and the gateway can be started.
+- The relay stack is running (`docker compose up`).
+- `curl http://localhost:8001/health` returns `{"status":"ok"}`.
 
-Set these values:
+---
+
+#### Step 1 — Configure the relay for OpenClaw
+
+Open `.env` and set these four values. Find the token values in `~/.openclaw/openclaw.json` (see the table below).
 
 ```dotenv
-WAHA_BASE_URL=http://localhost:3002/api
-WHATSAPP_HOOK_URL=http://localhost:8001/webhook/waha
-MONGO_URI=mongodb://localhost:27017
-WHATSAPP_SESSIONS_MONGO_URL=mongodb://localhost:27017
-QDRANT_URL=http://localhost:6333
+OPENCLAW_URL=http://localhost:18789
+OPENCLAW_TOKEN=<hooks.token from openclaw.json>
+OPENCLAW_AGENT_NAME=MCP
+OPENCLAW_GATEWAY_TOKEN=<gateway.auth.token from openclaw.json>
 ```
 
-### Step 3: Install dependencies
+Token locations in `~/.openclaw/openclaw.json`:
 
-```bash
-uv sync
-```
+| Variable | Key path |
+| --- | --- |
+| `OPENCLAW_TOKEN` | `hooks.token` |
+| `OPENCLAW_GATEWAY_TOKEN` | `gateway.auth.token` |
 
-### Step 4: Run the relay in HTTP mode
-
-```bash
-MCP_TRANSPORT=http uv run python main.py
-```
-
-### Step 5: Verify the relay
-
-```bash
-curl http://localhost:8001/health
-```
-
-### Step 6: Optional stdio mode
-
-If you want MCP over stdio while still keeping the webhook receiver running:
-
-```bash
-MCP_TRANSPORT=stdio uv run python main.py
-```
-
-## Environment Variables
-
-This project uses one `.env` file for both WAHA and the Python relay. Some
-variables are consumed by both, some only by WAHA, and some only by the relay.
-
-### Required and commonly edited
-
-| Variable | Used by | What it does | What you can set |
-| --- | --- | --- | --- |
-| `TOKEN_SECRET` | Relay | HMAC secret for phone-number tokenization | Any new base64-url-safe 32-byte secret. Change this for every deployment. |
-| `WAHA_API_KEY` | WAHA, Relay | Authenticates relay requests to WAHA | Any random string. Must match between relay and WAHA. |
-| `WAHA_WEBHOOK_SECRET` | WAHA, Relay | Secret used to verify WAHA webhook signatures | Any random string. Must equal `WHATSAPP_HOOK_HMAC_KEY`. |
-| `WHATSAPP_HOOK_HMAC_KEY` | WAHA | Secret WAHA uses to sign webhook payloads | Same exact value as `WAHA_WEBHOOK_SECRET`. |
-| `WAHA_BASE_URL` | Relay | Base URL for WAHA API | Docker: `http://waha:3000/api`. Host mode: `http://localhost:3002/api`. |
-| `WHATSAPP_HOOK_URL` | WAHA | Where WAHA sends webhook events | Docker: `http://relay:8001/webhook/waha`. Host mode: `http://localhost:8001/webhook/waha`. |
-| `MONGO_URI` | Relay | MongoDB connection string for relay data | Docker: `mongodb://mongodb:27017`. Host mode: `mongodb://localhost:27017`. |
-| `WHATSAPP_SESSIONS_MONGO_URL` | WAHA | MongoDB connection string for WAHA session storage | Usually same host as `MONGO_URI`. |
-| `MONGO_DB_NAME` | Relay | Mongo database name | Any DB name. Default `aira_relay`. |
-| `QDRANT_URL` | Relay | Qdrant endpoint used during startup and for contact indexing | In Docker Compose this is overridden to `http://qdrant:6333`. For host mode use `http://localhost:6333`. |
-| `QDRANT_API_KEY` | Relay | Auth for protected Qdrant servers | Leave empty unless your Qdrant instance requires it. |
-| `MCP_PORT` | Relay, Compose | Host port for MCP HTTP | Any free port. Default `8000`. |
-| `WEBHOOK_PORT` | Relay, Compose | Host port for webhook receiver | Any free port. Default `8001`. |
-| `DEBUGPY_PORT` | Relay, Compose | Debugpy attach port | Any free port. Default `5678`. |
-
-### WAHA behavior and operational settings
-
-| Variable | What it does | What you can set |
-| --- | --- | --- |
-| `WAHA_DASHBOARD_USERNAME` | WAHA dashboard auth username | Any username you want. |
-| `WAHA_DASHBOARD_PASSWORD` | WAHA dashboard auth password | Set a strong password. |
-| `WHATSAPP_SWAGGER_USERNAME` | WAHA Swagger auth username | Any username you want. |
-| `WHATSAPP_SWAGGER_PASSWORD` | WAHA Swagger auth password | Set a strong password. |
-| `WAHA_DASHBOARD_ENABLED` | Enables WAHA dashboard UI | `True` or `False`. |
-| `WHATSAPP_SWAGGER_ENABLED` | Enables WAHA Swagger UI | `True` or `False`. |
-| `WHATSAPP_HOOK_EVENTS` | WAHA events sent to relay | Keep at least `session.status,message`. `message.reaction` is optional and currently ignored by relay. |
-| `WHATSAPP_DEFAULT_ENGINE` | WAHA backend engine | `GOWS`, `NOWEB`, or `WEBJS`. This repo is set up around `GOWS`. |
-| `WAHA_PUBLIC_URL` | External WAHA URL shown in WAHA-generated links | Set to the public URL users or tools should reach. |
-| `WAHA_LOG_FORMAT` | WAHA log style | Common values: `PRETTY`, `JSON`. |
-| `WAHA_LOG_LEVEL` | WAHA log verbosity | Common values: `debug`, `info`, `warn`, `error`. |
-| `WAHA_PRINT_QR` | Whether WAHA prints QR output in logs | `True` or `False`. Usually `False` here. |
-| `WAHA_MEDIA_STORAGE` | WAHA media storage backend | `LOCAL` is the value used here. |
-| `WHATSAPP_FILES_LIFETIME` | Lifetime of stored media files in seconds | Increase if media URLs expire too quickly. |
-| `WHATSAPP_FILES_FOLDER` | Media storage path inside WAHA container | Usually leave as `/app/.media`. |
-
-
-
-### Message filtering
-
-| Variable | What it does | What you can set |
-| --- | --- | --- |
-| `IGNORED_NUMBERS` | Comma-separated phone numbers (digits only, no `+` or spaces). Messages from these numbers are silently dropped before any processing. | e.g. `14155552671,918123941616`. Leave empty to disable. Include the number you logged into OpenClaw with to avoid circular notifications. |
-
-### Optional OpenClaw integration
-
-| Variable | What it does | What you can set |
-| --- | --- | --- |
-| `OPENCLAW_URL` | Enables forwarding relay events to OpenClaw and uses OpenClaw for LLM completion | Leave empty to disable. |
-| `OPENCLAW_TOKEN` | Bearer token used when sending webhook events to OpenClaw hook endpoints | You can find this in `~/.openclaw/openclaw.json` under `hooks.token`. |
-| `OPENCLAW_AGENT_NAME` | Name sent in OpenClaw hook payloads | Any label. Default is `MCP`. |
-| `OPENCLAW_GATEWAY_TOKEN` | Bearer token used when calling OpenClaw chat completion APIs | You can find this in `~/.openclaw/openclaw.json` under `gateway.auth.token`. |
-
-OpenClaw stores these values in `~/.openclaw/openclaw.json`.
-
-Example:
+Example `~/.openclaw/openclaw.json`:
 
 ```json
 {
@@ -324,115 +229,7 @@ Example:
 }
 ```
 
-Token locations:
-
-| Token | Location in `~/.openclaw/openclaw.json` |
-| --- | --- |
-| Webhook Token | `hooks.token` |
-| Gateway Token | `gateway.auth.token` |
-
-Example `.env` values:
-
-```dotenv
-OPENCLAW_URL=http://localhost:18789
-OPENCLAW_TOKEN=YOUR_WEBHOOK_TOKEN
-OPENCLAW_AGENT_NAME=MCP
-OPENCLAW_GATEWAY_TOKEN=YOUR_GATEWAY_TOKEN
-```
-
-Important:
-
-- Never commit `~/.openclaw/openclaw.json` or `.env` files that contain real tokens.
-- Leave `OPENCLAW_URL` empty if you do not want Relay to forward events to OpenClaw or use OpenClaw as the LLM backend.
-
-### Debugging and transport
-
-| Variable | What it does | What you can set |
-| --- | --- | --- |
-| `MCP_TRANSPORT` | Chooses how MCP is exposed | `http` or `stdio`. Dockerfile defaults to `http`. |
-| `DEBUGPY_ENABLE` | Enables debugpy listener | `true` or `false`. |
-| `DEBUGPY_WAIT_FOR_CLIENT` | Blocks startup until debugger attaches | `true` or `false`. |
-
-## Common Misconfigurations
-
-- `WAHA_BASE_URL` missing `/api`
-- `WAHA_WEBHOOK_SECRET` and `WHATSAPP_HOOK_HMAC_KEY` set to different values
-- `WHATSAPP_HOOK_URL` pointing to `localhost` while WAHA itself runs inside Docker
-- Reusing placeholder credentials from `.env.example` instead of replacing them
-
-## Notes
-
-- The Docker setup in this repository uses `MCP_TRANSPORT=http` by default.
-- The webhook receiver is always started, even in `stdio` mode.
-
----
-
-## Connecting OpenClaw to AiRA Relay
-
-This guide walks you through making OpenClaw aware of the tools exposed by the AiRA Relay MCP server.
-
-**What you will end up with:** OpenClaw will be able to use all AiRA Relay tools (like `send_text_message`, `get_chats`, `sync_chats`, etc.) directly from the agent, the same way it uses any of its built-in tools.
-
-**Why this is needed:** OpenClaw does not automatically discover external MCP servers. You need to create a small local plugin called `mcp-bridge` that acts as a connector — it fetches the tool list from the relay and registers each tool inside OpenClaw so the agent can use them.
-
-### Before you start
-
-Make sure all of these are true before continuing:
-
-- OpenClaw is installed and the gateway can be started.
-- The AiRA Relay stack is running (`docker compose up`).
-- You can reach the relay at `http://127.0.0.1:8000/mcp` (check with `curl http://127.0.0.1:8001/health`).
-
----
-
-### Step 1 — Configure the relay `.env` for OpenClaw
-
-> Skip this step if you only want the MCP tools available in OpenClaw and do not need the relay to forward incoming WhatsApp events to OpenClaw or use OpenClaw as the LLM backend.
-
-Open your `.env` file and set these four values:
-
-```dotenv
-OPENCLAW_URL=http://localhost:18789
-OPENCLAW_TOKEN=YOUR_WEBHOOK_TOKEN
-OPENCLAW_AGENT_NAME=MCP
-OPENCLAW_GATEWAY_TOKEN=YOUR_GATEWAY_TOKEN
-```
-
-Where to find the token values — open `~/.openclaw/openclaw.json` and look here:
-
-| Variable | Location in `~/.openclaw/openclaw.json` |
-| --- | --- |
-| `OPENCLAW_TOKEN` | `hooks.token` |
-| `OPENCLAW_GATEWAY_TOKEN` | `gateway.auth.token` |
-
-Example `~/.openclaw/openclaw.json`:
-
-```json
-{
-  "hooks": {
-    "enabled": true,
-    "path": "/hooks",
-    "token": "YOUR_WEBHOOK_TOKEN" // genereate the token if not present
-  },
-  "gateway": {
-    "auth": {
-      "mode": "token",
-      "token": "YOUR_GATEWAY_TOKEN"
-    }
-  }
-}
-```
-
-What each variable does:
-
-| Variable | What it does |
-| --- | --- |
-| `OPENCLAW_URL` | Tells the relay where OpenClaw is running. Setting this enables event forwarding and LLM routing through OpenClaw. Leave empty to disable. |
-| `OPENCLAW_TOKEN` | Used by the relay to authenticate when posting webhook events to OpenClaw. |
-| `OPENCLAW_AGENT_NAME` | Label sent in event payloads so OpenClaw knows which agent sent them. |
-| `OPENCLAW_GATEWAY_TOKEN` | Used by the relay when calling OpenClaw's chat completion API. |
-
-After editing `.env`, restart the relay stack so the values take effect:
+Restart the relay after editing `.env`:
 
 ```bash
 docker compose down && docker compose up
@@ -440,21 +237,17 @@ docker compose down && docker compose up
 
 ---
 
-### Step 2 — Create the plugin folder
-
-Create this directory on your machine:
+#### Step 2 — Create the plugin folder
 
 ```bash
 mkdir -p ~/.openclaw/extensions/mcp-bridge
 ```
 
-You will put two files inside it in the next two steps.
-
 ---
 
-### Step 3 — Create the plugin manifest
+#### Step 3 — Create the plugin manifest
 
-Create the file `~/.openclaw/extensions/mcp-bridge/openclaw.plugin.json` with this content:
+Create `~/.openclaw/extensions/mcp-bridge/openclaw.plugin.json`:
 
 ```json
 {
@@ -478,13 +271,11 @@ Create the file `~/.openclaw/extensions/mcp-bridge/openclaw.plugin.json` with th
 }
 ```
 
-This file tells OpenClaw that the folder is a plugin and describes what configuration it accepts.
-
 ---
 
-### Step 4 — Create the plugin code
+#### Step 4 — Create the plugin code
 
-Create the file `~/.openclaw/extensions/mcp-bridge/index.ts` with this content:
+Create `~/.openclaw/extensions/mcp-bridge/index.ts`:
 
 ```typescript
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
@@ -663,28 +454,20 @@ export default async function (api: OpenClawPluginApi) {
 }
 ```
 
-This is the plugin logic. When OpenClaw loads it, the plugin connects to the relay, fetches all available tools, and registers them so the agent can use them.
-
 ---
 
-### Step 5 — Update your OpenClaw config
+#### Step 5 — Update your OpenClaw config
 
-Open `~/.openclaw/openclaw.json` and add or update the `tools` and `plugins` sections as shown below.
-
-> If you already have other plugins like `telegram` or `whatsapp`, keep them — just add the `mcp-bridge` entries alongside them.
+Open `~/.openclaw/openclaw.json` and add or update the `tools`, `plugins`, and `hooks` sections. Keep any existing plugins alongside these new entries.
 
 ```json
 {
   "tools": {
     "profile": "full",
-    "allow": [
-      "mcp-bridge"
-    ]
+    "allow": ["mcp-bridge"]
   },
   "plugins": {
-    "allow": [
-      "mcp-bridge"
-    ],
+    "allow": ["mcp-bridge"],
     "entries": {
       "mcp-bridge": {
         "enabled": true,
@@ -695,11 +478,9 @@ Open `~/.openclaw/openclaw.json` and add or update the `tools` and `plugins` sec
     }
   },
   "hooks": {
-   "mappings": [
+    "mappings": [
       {
-        "match": {
-          "path": "/waha"
-        },
+        "match": { "path": "/waha" },
         "action": "agent",
         "wakeMode": "now",
         "name": "WhatsApp",
@@ -714,104 +495,203 @@ Open `~/.openclaw/openclaw.json` and add or update the `tools` and `plugins` sec
 }
 ```
 
-Here is what each part does:
-
-| Key | What it does |
+| Config key | What it does |
 | --- | --- |
-| `tools.profile: "full"` | Enables the full set of built-in OpenClaw tools. Must be `"full"` — `"all"` is not a valid value. |
-| `tools.allow: ["mcp-bridge"]` | Grants the bridge plugin's tools access to the agent. Without this, the tools are registered but the agent cannot use them. |
-| `plugins.allow: ["mcp-bridge"]` | Marks the plugin as trusted local code. Without this, OpenClaw will warn that the plugin is unverified. |
-| `plugins.entries.mcp-bridge.enabled: true` | Tells OpenClaw to load and run the plugin when it starts. |
-| `plugins.entries.mcp-bridge.config.url` | The MCP server URL the plugin should connect to. Change this if your relay runs on a different port. |
-| `hooks.mappings` | Routes incoming webhook events to the OpenClaw agent. The entry shown matches all requests to `/wake` and wakes the agent immediately. |
+| `tools.profile: "full"` | Enables built-in OpenClaw tools. Must be `"full"` — `"all"` is not valid. |
+| `tools.allow: ["mcp-bridge"]` | Lets the agent use the bridge's tools. Without this, tools are registered but blocked. |
+| `plugins.allow: ["mcp-bridge"]` | Marks the plugin as trusted local code. Suppresses the "unverified" warning. |
+| `plugins.entries.mcp-bridge.enabled` | Tells OpenClaw to load the plugin at startup. |
+| `plugins.entries.mcp-bridge.config.url` | The MCP server URL. Change if your relay runs on a different port. |
+| `hooks.mappings` | Routes incoming WhatsApp events to the OpenClaw agent. |
 
 ---
 
-### Step 6 — Restart the OpenClaw gateway
+#### Step 6 — Restart the OpenClaw gateway
 
 ```bash
 openclaw gateway restart
 ```
 
-OpenClaw reads plugin and config changes only at startup, so a restart is required.
-
----
-
-### Step 7 — Verify it worked
+#### Step 7 — Verify the plugin loaded
 
 ```bash
 openclaw channels status
 ```
 
-Look for a line like this in the output:
+Look for:
 
 ```
 mcp-bridge: registered 18 tools from http://127.0.0.1:8000/mcp
 ```
 
-That means:
-
-- The plugin loaded successfully.
-- It connected to the AiRA Relay MCP server.
-- It discovered tools from the relay.
-- Those tools are now registered and available to the OpenClaw agent.
-
 ---
 
-### Step 8 — Connect WhatsApp through the agent
+## Local Development
 
-Once the tools are registered and the relay is running, you need to pair a WhatsApp account before any messaging tools will work.
+Use this only if you want to run the Python relay directly on your machine instead of Docker.
 
-#### 8a — Ask the agent to connect WhatsApp
+### Step 1 — Start external services
 
-In the OpenClaw agent chat, type exactly:
+Start these three services first (however you prefer — Docker, Homebrew, etc.):
 
-```
-Connect WhatsApp and send me the request code.
-```
+1. MongoDB on `localhost:27017`
+2. Qdrant on `localhost:6333`
+3. WAHA on `localhost:3002`
 
-The agent will call the `connect_whatsapp` tool. It will return a **pairing code** (e.g. `ABC1-2345`).
+### Step 2 — Update `.env` for host mode
 
-#### 8b — Pair your phone
+Change the service URLs to point at localhost:
 
-1. Open WhatsApp on your phone.
-2. Go to **Settings → Linked Devices → Link a Device**.
-3. Tap **Link with phone number instead** when prompted.
-4. Enter the pairing code the agent gave you.
-
-Your phone will confirm the link within a few seconds.
-
-#### 8c — Confirm the session is active
-
-Ask the agent:
-
-```
-Is the WhatsApp session connected and working?
+```dotenv
+WAHA_BASE_URL=http://localhost:3002/api
+WHATSAPP_HOOK_URL=http://localhost:8001/webhook/waha
+MONGO_URI=mongodb://localhost:27017
+WHATSAPP_SESSIONS_MONGO_URL=mongodb://localhost:27017
+QDRANT_URL=http://localhost:6333
 ```
 
-The agent will check the session status. Wait until it reports `WORKING`. If it reports a transitional state like `SCAN_QR_CODE` or `CONNECTING`, wait a moment and ask again.
+### Step 3 — Install dependencies
 
-#### 8d — Start using WhatsApp
-
-Once the session is `WORKING`, all WhatsApp tools are available. For example:
-
-```
-Sync my chats and show me the most recent ones.
+```bash
+uv sync
 ```
 
+### Step 4 — Run the relay
+
+```bash
+MCP_TRANSPORT=http uv run python main.py
 ```
-Send a WhatsApp message to +1234567890 saying "Hello from AiRA".
+
+Verify:
+
+```bash
+curl http://localhost:8001/health
+```
+
+**Optional — stdio mode:** If you want MCP over stdio while keeping the webhook receiver running:
+
+```bash
+MCP_TRANSPORT=stdio uv run python main.py
 ```
 
 ---
 
-### Troubleshooting
+## Environment Variables Reference
 
-| Problem | Cause | Fix |
+### Secrets and service URLs
+
+| Variable | Used by | Description |
 | --- | --- | --- |
-| `failed to connect to http://127.0.0.1:8000/mcp` | Relay is not running or wrong port | Run `docker compose up` and confirm `curl http://localhost:8001/health` returns `{"status":"ok"}` |
-| `no tools found at URL` | Relay returned an empty tool list | Check relay container logs with `docker compose logs relay` |
-| Plugin loads but shows "without provenance" warning | Plugin is local code not installed via the store | Add `"mcp-bridge"` to `plugins.allow` in your config |
-| MCP tools are registered but agent cannot use them | `tools.allow` is missing the plugin | Add `"mcp-bridge"` to the `tools.allow` list |
-| OpenClaw fails to start after config change | JSON syntax error in `openclaw.json` | Validate your JSON with `cat ~/.openclaw/openclaw.json \| python3 -m json.tool` |
-| `tools.profile` shows an error | `"all"` is not a valid value | Change it to `"full"` |
+| `TOKEN_SECRET` | Relay | HMAC key for phone number tokenization. Generate with `openssl rand -hex 32`. Change for every deployment. |
+| `WAHA_API_KEY` | WAHA, Relay | Authenticates relay requests to WAHA. Any random string. Must match between relay and WAHA. |
+| `WAHA_WEBHOOK_SECRET` | WAHA, Relay | Relay uses this to verify incoming webhook signatures. Must equal `WHATSAPP_HOOK_HMAC_KEY`. |
+| `WHATSAPP_HOOK_HMAC_KEY` | WAHA | WAHA uses this to sign webhook payloads. Same exact value as `WAHA_WEBHOOK_SECRET`. |
+| `WAHA_BASE_URL` | Relay | Base URL for WAHA API. Docker: `http://waha:3000/api`. Host mode: `http://localhost:3002/api`. |
+| `WHATSAPP_HOOK_URL` | WAHA | Where WAHA sends webhook events. Docker: `http://relay:8001/webhook/waha`. Host mode: `http://localhost:8001/webhook/waha`. |
+| `MONGO_URI` | Relay | MongoDB connection string. Docker: `mongodb://mongodb:27017`. Host mode: `mongodb://localhost:27017`. |
+| `WHATSAPP_SESSIONS_MONGO_URL` | WAHA | MongoDB for WAHA session storage. Usually same host as `MONGO_URI`. |
+| `MONGO_DB_NAME` | Relay | Mongo database name. Default: `aira_relay`. |
+| `QDRANT_URL` | Relay | Qdrant endpoint. Docker Compose overrides this to `http://qdrant:6333`. Host mode: `http://localhost:6333`. |
+| `QDRANT_API_KEY` | Relay | Auth for protected Qdrant instances. Leave empty for local Qdrant. |
+
+### Ports
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `MCP_PORT` | `8000` | Host port for the MCP HTTP server. |
+| `WEBHOOK_PORT` | `8001` | Host port for the webhook receiver. |
+| `DEBUGPY_PORT` | `5678` | Debugpy attach port. |
+
+### OpenClaw integration (optional)
+
+| Variable | Description |
+| --- | --- |
+| `OPENCLAW_URL` | Where OpenClaw is running. Setting this enables event forwarding and LLM routing. Leave empty to disable. |
+| `OPENCLAW_TOKEN` | Bearer token for posting webhook events to OpenClaw. Maps to `hooks.token` in `openclaw.json`. |
+| `OPENCLAW_AGENT_NAME` | Label sent in event payloads. Default: `MCP`. |
+| `OPENCLAW_GATEWAY_TOKEN` | Bearer token for calling OpenClaw's chat completion API. Maps to `gateway.auth.token` in `openclaw.json`. |
+
+### OpenRouter LLM (optional)
+
+| Variable | Description |
+| --- | --- |
+| `OPENROUTER_API_KEY` | API key for OpenRouter. Used as an alternative LLM backend. Leave empty to disable. |
+| `OPENROUTER_MODEL` | Model to use via OpenRouter (e.g. `openai/gpt-4o-mini`). |
+
+### Message filtering
+
+| Variable | Description |
+| --- | --- |
+| `IGNORED_NUMBERS` | Comma-separated phone numbers (digits only, no `+` or spaces). Messages from these numbers are silently dropped. Include the number you logged into OpenClaw with to prevent circular notifications. |
+
+### WAHA behavior
+
+| Variable | Description |
+| --- | --- |
+| `WAHA_DASHBOARD_USERNAME` | WAHA dashboard login username. |
+| `WAHA_DASHBOARD_PASSWORD` | WAHA dashboard login password. |
+| `WHATSAPP_SWAGGER_USERNAME` | WAHA Swagger UI username. |
+| `WHATSAPP_SWAGGER_PASSWORD` | WAHA Swagger UI password. |
+| `WAHA_DASHBOARD_ENABLED` | Enables the WAHA dashboard. `True` or `False`. |
+| `WHATSAPP_SWAGGER_ENABLED` | Enables the WAHA Swagger UI. `True` or `False`. |
+| `WHATSAPP_HOOK_EVENTS` | WAHA events forwarded to the relay. Keep at least `session.status,message`. |
+| `WHATSAPP_DEFAULT_ENGINE` | WAHA backend engine. `GOWS` (default), `NOWEB`, or `WEBJS`. |
+| `WAHA_PUBLIC_URL` | External WAHA URL used in WAHA-generated links. |
+| `WAHA_LOG_FORMAT` | WAHA log style. `PRETTY` or `JSON`. |
+| `WAHA_LOG_LEVEL` | WAHA log verbosity. `debug`, `info`, `warn`, or `error`. |
+| `WAHA_PRINT_QR` | Whether WAHA prints QR output in logs. Usually `False`. |
+| `WAHA_MEDIA_STORAGE` | WAHA media storage backend. `LOCAL` is the value used here. |
+| `WHATSAPP_FILES_LIFETIME` | Lifetime of stored media files in seconds. Increase if media URLs expire too quickly. |
+| `WHATSAPP_FILES_FOLDER` | Media storage path inside the WAHA container. Default: `/app/.media`. |
+
+### Debugging and transport
+
+| Variable | Description |
+| --- | --- |
+| `MCP_TRANSPORT` | `http` (default in Docker) or `stdio`. |
+| `DEBUGPY_ENABLE` | Enables debugpy listener. `true` or `false`. |
+| `DEBUGPY_WAIT_FOR_CLIENT` | Blocks startup until a debugger attaches. `true` or `false`. |
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Relay can't reach WAHA | `WAHA_BASE_URL` missing `/api` | Set `WAHA_BASE_URL=http://waha:3000/api` |
+| Webhook signature verification fails | `WAHA_WEBHOOK_SECRET` and `WHATSAPP_HOOK_HMAC_KEY` are different | Set both to the same random string |
+| WAHA can't send events to relay | `WHATSAPP_HOOK_URL` points to `localhost` while WAHA runs in Docker | Use `http://relay:8001/webhook/waha` in Docker Compose |
+| Stack starts but nothing works | Placeholder credentials from `.env.example` still in use | Replace all four secrets in Step 2 |
+| `tools.profile` error in OpenClaw | `"all"` is not a valid value | Change to `"full"` |
+| MCP tools registered but agent can't use them | `tools.allow` missing the plugin | Add `"mcp-bridge"` to `tools.allow` |
+| Plugin loads with "without provenance" warning | Local plugin not marked as trusted | Add `"mcp-bridge"` to `plugins.allow` |
+| `failed to connect to http://127.0.0.1:8000/mcp` | Relay not running or wrong port | Run `docker compose up` and confirm health returns `{"status":"ok"}` |
+| `no tools found at URL` | Relay returned an empty tool list | Check logs: `docker compose logs relay` |
+| OpenClaw fails to start after config change | JSON syntax error in `openclaw.json` | Validate: `cat ~/.openclaw/openclaw.json \| python3 -m json.tool` |
+
+### Checking logs
+
+```bash
+# All services
+docker compose logs -f
+
+# Relay only
+docker compose logs -f relay
+
+# WAHA only
+docker compose logs -f waha
+```
+
+### Stop the stack
+
+```bash
+docker compose down
+```
+
+---
+
+## Contributors
+
+| Name | LinkedIn |
+| --- | --- |
+| Dhanesh Pottekula | [linkedin.com/in/dhanesh-pottekula-a40900230](https://www.linkedin.com/in/dhanesh-pottekula-a40900230/) |
