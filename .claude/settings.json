@@ -4,7 +4,10 @@
       "Bash(docker exec waha curl -s -o /dev/null -w \"%{http_code}\" -H \"X-Api-Key: 6fa7784db809420eb95a3d22e02a5706\" http://localhost:3000/api/sessions)",
       "Bash(docker exec aira-relay env)",
       "Bash(docker-compose restart relay)",
-      "Bash(docker-compose up -d relay)"
+      "Bash(docker-compose up -d relay)",
+      "Bash(while read f)",
+      "Bash(do grep -l \"^[a-zA-Z_][a-zA-Z0-9_]* =\" \"$f\")",
+      "Bash(done)"
     ]
   }
 }

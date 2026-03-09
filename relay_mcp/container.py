@@ -14,8 +14,8 @@ if TYPE_CHECKING:
     from core.contact_service import ContactService
     from core.message_service import MessageService
     from core.user_service import UserService
-    from events.bus import EventBus
     from events.mcp_handler import McpEventHandler
+    from ports.event_bus import IEventBus
     from ports.llm import ILLMAdapter
     from utils.concurrency import TaskRegistry
 
@@ -30,7 +30,7 @@ class McpContainer:
         message_service: MessageService,
         contact_service: ContactService,
         connection_service: ConnectionService,
-        event_bus: EventBus,
+        event_bus: IEventBus,
         openclaw: ILLMAdapter,
         task_registry: TaskRegistry,
         mcp_handler: McpEventHandler,

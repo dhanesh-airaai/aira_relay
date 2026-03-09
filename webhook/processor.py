@@ -16,6 +16,7 @@ from models.events import IncomingMessageEvent, SessionStatusEvent, SyncChatsEve
 if TYPE_CHECKING:
     from core.chat_service import ChatService
     from core.user_service import UserService
+    from infra.openclaw import OpenClawAdapter
     from ports.event_bus import IEventBus
     from ports.llm import ILLMAdapter
     from ports.messaging import IMessagingPort
@@ -35,6 +36,8 @@ class WebhookProcessor:
         event_bus: IEventBus,
         task_registry: TaskRegistry,
         llm: ILLMAdapter | None = None,
+        ignored_numbers: set[str] | None = None,
+        openclaw: OpenClawAdapter | None = None,
     ) -> None:
         self._messaging = messaging
         self._user_service = user_service
@@ -42,6 +45,8 @@ class WebhookProcessor:
         self._event_bus = event_bus
         self._tasks = task_registry
         self._llm = llm
+        self._ignored_numbers: set[str] = ignored_numbers or set()
+        self._openclaw = openclaw
 
     # ------------------------------------------------------------------
     # Incoming message
@@ -80,6 +85,12 @@ class WebhookProcessor:
                 sender_jid = chat_id
 
         sender_phone = sender_jid.split("@")[0]
+        # Drop messages from explicitly ignored numbers
+        if sender_phone in self._ignored_numbers:
+            logger.debug("Ignoring message from blocked number %s", sender_phone)
+            return
+
+        
 
         # Ensure user record exists and look up (or create on demand) the chat
         user = await self._user_service.get_or_create(session)
@@ -95,6 +106,21 @@ class WebhookProcessor:
 
         chat_name = chat_doc.get("chat_name", "")
         chat_type = "group" if chat_id.endswith("@g.us") else "dm"
+
+        # Notify OpenClaw immediately — before media download which can be slow
+        if self._openclaw and self._openclaw.is_configured:
+            self._tasks.spawn(
+                self._openclaw.push_event({
+                    "event": "message",
+                    "sender_phone": sender_phone,
+                    "chat_name": chat_name,
+                    "chat_id": chat_id,
+                    "chat_type": chat_type,
+                    "body": payload.body or "",
+                    "timestamp": payload.timestamp or 0,
+                }),
+                name=f"openclaw_msg_{payload.id}",
+            )
 
         media_url = payload.media.url if payload.has_media and payload.media else ""
         media_mimetype = (

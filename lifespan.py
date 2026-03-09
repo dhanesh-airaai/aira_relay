@@ -1,8 +1,9 @@
 """Application assembly — builds the complete object graph.
 
-Call ``build()`` once at startup.  It returns the fully-wired MCP FastMCP
-server and Starlette webhook application, sharing a single set of service
-instances (no duplicate clients, no module-level singletons).
+Use ``lifespan()`` as an async context manager at startup.  It yields the
+fully-wired MCP FastMCP server and Starlette webhook application, sharing a
+single set of service instances (no duplicate clients, no module-level
+singletons).  On exit it drains background tasks and disconnects from MongoDB.
 """
 
 from __future__ import annotations
@@ -151,6 +152,14 @@ async def lifespan() -> AsyncIterator[AppComponents]:
 
     # ------------------------------------------------------------------
     # Layer 6 — event handlers
+    #
+    # McpEventHandler: broadcasts all events to live MCP sessions and queues
+    #   IncomingMessageEvents for the get_incoming_message tool.
+    #
+    # OpenClawHandler: forwards session.status and sync_chats events to OpenClaw
+    #   via HTTP.  IncomingMessageEvents are NOT forwarded here — they are pushed
+    #   directly (fire-and-forget) inside WebhookProcessor before media download,
+    #   so the notification is immediate rather than waiting for enrichment.
     # ------------------------------------------------------------------
     from events.mcp_handler import McpEventHandler
     from events.openclaw_handler import OpenClawHandler
@@ -194,6 +203,8 @@ async def lifespan() -> AsyncIterator[AppComponents]:
         event_bus=event_bus,
         task_registry=task_registry,
         llm=openrouter if openrouter.is_configured else None,
+        ignored_numbers=settings.ignored_numbers_set,
+        openclaw=openclaw if openclaw.is_configured else None,
     )
 
     webhook_app = build_webhook_app(

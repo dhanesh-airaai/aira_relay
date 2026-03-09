@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from models.events import RelayEvent
+from models.events import IncomingMessageEvent, RelayEvent
 
 if TYPE_CHECKING:
     from infra.openclaw import OpenClawAdapter
@@ -21,5 +21,9 @@ class OpenClawHandler:
 
     async def handle(self, event: RelayEvent) -> None:
         if not self._adapter.is_configured:
+            return
+        # IncomingMessageEvent is pushed directly in WebhookProcessor (fire-and-forget)
+        # before media download to avoid latency. Skip here to prevent duplicates.
+        if isinstance(event, IncomingMessageEvent):
             return
         await self._adapter.push_event(event.model_dump())

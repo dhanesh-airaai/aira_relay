@@ -289,6 +289,12 @@ variables are consumed by both, some only by WAHA, and some only by the relay.
 
 
 
+### Message filtering
+
+| Variable | What it does | What you can set |
+| --- | --- | --- |
+| `IGNORED_NUMBERS` | Comma-separated phone numbers (digits only, no `+` or spaces). Messages from these numbers are silently dropped before any processing. | e.g. `14155552671,918123941616`. Leave empty to disable. Include the number you logged into OpenClaw with to avoid circular notifications. |
+
 ### Optional OpenClaw integration
 
 | Variable | What it does | What you can set |
@@ -687,6 +693,23 @@ Open `~/.openclaw/openclaw.json` and add or update the `tools` and `plugins` sec
         }
       }
     }
+  },
+  "hooks": {
+   "mappings": [
+      {
+        "match": {
+          "path": "/waha"
+        },
+        "action": "agent",
+        "wakeMode": "now",
+        "name": "WhatsApp",
+        "deliver": true,
+        "to": "+917995154159",
+        "channel": "whatsapp",
+        "allowUnsafeExternalContent": true,
+        "messageTemplate": "{{payload.message}}"
+      }
+    ]
   }
 }
 ```
@@ -700,6 +723,7 @@ Here is what each part does:
 | `plugins.allow: ["mcp-bridge"]` | Marks the plugin as trusted local code. Without this, OpenClaw will warn that the plugin is unverified. |
 | `plugins.entries.mcp-bridge.enabled: true` | Tells OpenClaw to load and run the plugin when it starts. |
 | `plugins.entries.mcp-bridge.config.url` | The MCP server URL the plugin should connect to. Change this if your relay runs on a different port. |
+| `hooks.mappings` | Routes incoming webhook events to the OpenClaw agent. The entry shown matches all requests to `/wake` and wakes the agent immediately. |
 
 ---
 

@@ -53,6 +53,17 @@ class Settings(BaseSettings):
     openclaw_token: str | None = None        # Bearer token
     openclaw_agent_name: str = "MCP"         # name field in the hook payload
     openclaw_gateway_token: str | None = None
+    openclaw_deliver_channel: str = "last"   # whatsapp / telegram / last / etc.
+    openclaw_deliver_to: str | None = None   # phone / chat-id — omit to use "last"
+
+    # Numbers to ignore — comma-separated phone numbers (digits only, no + or spaces)
+    # Messages from these numbers will be silently dropped.
+    # Example: IGNORED_NUMBERS=14155552671,447911123456
+    ignored_numbers: str = ""
+
+    @property
+    def ignored_numbers_set(self) -> set[str]:
+        return {n.strip() for n in self.ignored_numbers.split(",") if n.strip()}
 
     # OpenRouter LLM (optional — used for chat description generation)
     openrouter_api_key: str | None = None

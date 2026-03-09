@@ -63,6 +63,7 @@ class ChatService:
             return SyncResult(success=False, message=f"Sync failed: {exc}", total_synced=0)
 
     async def _sync_once(self, *, session: str, user_id: str) -> int:
+        """Perform a single synchronization of chats from WAHA, processing groups and DMs."""
         lid_result, all_chats, all_contacts = await asyncio.gather(
             self._messaging.get_all_lids(session=session),
             self._messaging.get_all_chats(
@@ -94,11 +95,7 @@ class ChatService:
             cid = str(contact.get("id") or "")
             if not cid:
                 continue
-            name = (
-                contact.get("name")
-                or contact.get("pushname")
-                or ""
-            )
+            name = contact.get("name") or contact.get("pushname") or ""
             if name:
                 # Normalise: strip @c.us suffix for key lookup
                 key = cid.split("@")[0]
@@ -109,9 +106,13 @@ class ChatService:
         dms = [c for c in all_chats if not is_group_jid(str(c.get("id", "")))]
         logger.info(
             "Fetched %d total chats, %d contacts for user %s (%d groups, %d DMs)",
-            len(all_chats), len(all_contacts), user_id, len(groups), len(dms),
+            len(all_chats),
+            len(all_contacts),
+            user_id,
+            len(groups),
+            len(dms),
         )
-        logger.debug("Sample chat: %s", all_chats if all_chats else "No chats")  
+        logger.debug("Sample chat: %s", all_chats if all_chats else "No chats")
 
         chats_to_store: list[dict[str, Any]] = []
 
@@ -175,7 +176,11 @@ class ChatService:
             # Name from WAHA chat list, then fall back to contacts map
             chat_name = str(dm.get("name") or "")
             if not chat_name:
-                chat_name = contact_name_map.get(chat_id) or contact_name_map.get(chat_id.split("@")[0]) or ""
+                chat_name = (
+                    contact_name_map.get(chat_id)
+                    or contact_name_map.get(chat_id.split("@")[0])
+                    or ""
+                )
             idx = len(dm_info)
             dm_info.append(
                 {
@@ -201,10 +206,7 @@ class ChatService:
                     dm_info[idx]["chat_name"] = cid.split("@")[0]
                 else:
                     dm_info[idx]["chat_name"] = (
-                        detail.name
-                        or detail.pushname
-                        or detail.short_name
-                        or cid.split("@")[0]
+                        detail.name or detail.pushname or detail.short_name or cid.split("@")[0]
                     )
 
         chats_to_store.extend(
@@ -222,9 +224,7 @@ class ChatService:
         if chats_to_store:
             await asyncio.gather(
                 *[
-                    self._chat_repo.upsert(
-                        {"user_id": user_id, "w_chat_id": c["w_chat_id"]}, c
-                    )
+                    self._chat_repo.upsert({"user_id": user_id, "w_chat_id": c["w_chat_id"]}, c)
                     for c in chats_to_store
                 ]
             )
@@ -236,7 +236,9 @@ class ChatService:
                 if c.get("chat_name")
             ]
             if contacts_for_index:
-                logger.info("Indexing %d chats in Qdrant for user %s", len(contacts_for_index), user_id)
+                logger.info(
+                    "Indexing %d chats in Qdrant for user %s", len(contacts_for_index), user_id
+                )
                 try:
                     await self._contact_svc.add_to_phonetic_index(
                         contacts_for_index, user_id=user_id
@@ -282,12 +284,11 @@ class ChatService:
         w_lid: str,
         from_timestamp: int,
     ) -> dict[str, Any] | None:
+        """Create a chat document on demand using WAHA data if it doesn't exist in the repository."""
         try:
             if is_group_jid(chat_id):
                 try:
-                    group_data = await self._messaging.get_group(
-                        session=session, group_id=chat_id
-                    )
+                    group_data = await self._messaging.get_group(session=session, group_id=chat_id)
                     chat_name = (
                         group_data.get("Name") or group_data.get("name") or chat_id.split("@")[0]
                     )
@@ -340,6 +341,7 @@ class ChatService:
         chat_type: str | None = None,
         moderated_only: bool = False,
     ) -> list[dict[str, Any]]:
+        """Retrieve a list of chats for the given user, with optional filtering by type and moderation status."""
         filter_: dict[str, Any] = {"user_id": user_id}
         if chat_type:
             filter_["type"] = chat_type
@@ -423,4 +425,8 @@ class ChatService:
 
         results = await asyncio.gather(*[_describe(c) for c in chats])
         processed = sum(1 for r in results if r)
-        return {"processed": processed, "skipped": len(chats) - processed, "descriptions": descriptions}
+        return {
+            "processed": processed,
+            "skipped": len(chats) - processed,
+            "descriptions": descriptions,
+        }
