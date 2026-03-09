@@ -111,24 +111,57 @@ class ChatService:
             "Fetched %d total chats, %d contacts for user %s (%d groups, %d DMs)",
             len(all_chats), len(all_contacts), user_id, len(groups), len(dms),
         )
+        logger.debug("Sample chat: %s", all_chats if all_chats else "No chats")  
 
         chats_to_store: list[dict[str, Any]] = []
 
         # Group chats
+        group_info: list[dict[str, Any]] = []
+        groups_needing_name: list[tuple[int, str]] = []
+
         for group in groups:
             chat_id = str(group.get("id", ""))
             if not chat_id:
                 continue
-            chats_to_store.append(
+            chat_name = str(group.get("name") or "")
+            idx = len(group_info)
+            group_info.append(
                 {
-                    "user_id": user_id,
-                    "w_chat_id": chat_id,
-                    "chat_name": str(group.get("name") or ""),
-                    "type": WhatsappChatType.GROUP.value,
-                    "w_lid": chat_id,
-                    "conversation_timestamp": int(group.get("conversation_timestamp") or 0),
+                    "chat_id": chat_id,
+                    "chat_name": chat_name,
+                    "timestamp": int(group.get("conversation_timestamp") or 0),
                 }
             )
+            if not chat_name:
+                groups_needing_name.append((idx, chat_id))
+
+        if groups_needing_name:
+            group_results = await asyncio.gather(
+                *[
+                    self._messaging.get_group(session=session, group_id=gid)
+                    for _, gid in groups_needing_name
+                ],
+                return_exceptions=True,
+            )
+            for (idx, gid), result in zip(groups_needing_name, group_results, strict=True):
+                if isinstance(result, BaseException):
+                    group_info[idx]["chat_name"] = gid.split("@")[0]
+                else:
+                    group_info[idx]["chat_name"] = (
+                        result.get("Name") or result.get("name") or gid.split("@")[0]
+                    )
+
+        chats_to_store.extend(
+            {
+                "user_id": user_id,
+                "w_chat_id": str(info["chat_id"]),
+                "chat_name": str(info["chat_name"]),
+                "type": WhatsappChatType.GROUP.value,
+                "w_lid": str(info["chat_id"]),
+                "conversation_timestamp": int(info["timestamp"]),
+            }
+            for info in group_info
+        )
 
         # DM chats — resolve LIDs, fill names from contact map, then fetch stragglers
         dm_info: list[dict[str, Any]] = []
@@ -255,7 +288,9 @@ class ChatService:
                     group_data = await self._messaging.get_group(
                         session=session, group_id=chat_id
                     )
-                    chat_name = group_data.get("name") or chat_id.split("@")[0]
+                    chat_name = (
+                        group_data.get("Name") or group_data.get("name") or chat_id.split("@")[0]
+                    )
                 except Exception:
                     chat_name = chat_id.split("@")[0]
                 chat_type = WhatsappChatType.GROUP.value
